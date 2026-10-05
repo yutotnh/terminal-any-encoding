@@ -55,6 +55,14 @@ regenerating against the current ICU environment matches
 `tools/gen-tables/golden/tables.sha256`. The generated `builtin_ja.c`/
 `other_ja.c` are not hand-edited.
 
+The built-in tables are looked up before anything else (`lookup_order` in
+`luit.c`). Upstream looks in X11's font encodings (`.enc` files listed in an
+`encodings.dir` found at build time, or named by `FONT_ENCODINGS_DIRECTORY`)
+first, so wherever those are installed (Debian/Ubuntu's `xfonts-encodings`)
+`gbk-0` and `big5hkscs-0` decoded with that data instead of ours, and the
+fallback no longer applied. CI's native test job installs `xfonts-encodings`
+to keep that covered.
+
 The one exception is KOI8-T, which ICU has no converter for. Its table
 (`"iconv_lite"` in `converters.json`) comes from iconv-lite, the library
 VS Code itself decodes files with, so the terminal agrees with the editor.

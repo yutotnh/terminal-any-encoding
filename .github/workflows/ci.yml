@@ -36,10 +36,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.4.0
+      # xfonts-encodings installs X11's ".enc" tables, which upstream luit
+      # would prefer over the fork's built-in ones (see luit.c's
+      # lookup_order); the tests then check that ours still win.
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential autoconf
+          sudo apt-get install -y --no-install-recommends build-essential autoconf xfonts-encodings
       - name: Build transcoder
         run: bash transcoder/scripts/build.sh
       - name: Run table-driven tests

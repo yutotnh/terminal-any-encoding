@@ -82,9 +82,14 @@ int input_unencodable = 0;
 unsigned input_unencodable_char = 0;
 
 #ifdef USE_ICONV
+/* PATCH(fork, builtin first): upstream looks in the system's ".enc" files
+ * (fontenc) before the built-in tables. Those exist wherever X11's font
+ * encodings are installed (and FONT_ENCODINGS_DIRECTORY can point
+ * anywhere), so the fork's ICU-derived tables, e.g. gbk-0 and big5hkscs-0,
+ * would be replaced by different data depending on the machine. */
 UM_MODE lookup_order[] =
 {
-    umFONTENC, umBUILTIN, umICONV, umPOSIX, umNONE
+    umBUILTIN, umFONTENC, umICONV, umPOSIX, umNONE
 };
 #endif
 
