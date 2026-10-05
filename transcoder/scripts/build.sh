@@ -4,8 +4,14 @@
 # Usage:
 #   scripts/build.sh                 # native (dynamic linking, for development)
 #   scripts/build.sh --musl          # musl static linking (for distribution, Linux)
-#   scripts/build.sh --musl --arch arm64   # musl static linking (cross, aarch64)
-#   scripts/build.sh --musl --arch armhf   # musl static linking (cross, 32-bit ARM hard-float)
+#   scripts/build.sh --musl --arch arm64   # musl static linking (aarch64)
+#   scripts/build.sh --musl --arch armhf   # musl static linking (32-bit ARM hard-float)
+#
+# --musl builds with the system compiler where it already targets musl for
+# that architecture (e.g. in an Alpine container, which is what CI does:
+# `docker run --platform linux/arm64 -v "$PWD":/src -w /src alpine ...`),
+# and otherwise with a musl-cross toolchain (<triple>-gcc) on PATH, as in
+# the devcontainer.
 #
 # See docs/transcoder-design.md.
 set -euo pipefail
@@ -41,31 +47,39 @@ if [ "$STATIC" = "1" ]; then
     armhf) TARGET_TRIPLE="arm-linux-musleabihf" ;;
     *) echo "unknown --arch: $ARCH (must be x64, arm64 or armhf)" >&2; exit 1 ;;
   esac
-  CC="${TARGET_TRIPLE}-gcc"
-  STRIP="${TARGET_TRIPLE}-strip"
-  if ! command -v "$CC" >/dev/null 2>&1; then
-    echo "$CC not found. Add the musl-cross toolchain to PATH" \
-         "(it should already be there in the devcontainer)." >&2
-    exit 1
-  fi
   BUILD_TRIPLE="$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu)"
-  CC="$CC" ./configure --host="$TARGET_TRIPLE" --build="$BUILD_TRIPLE" --disable-fontenc
+  case "$ARCH:$BUILD_TRIPLE" in
+    x64:x86_64-*-musl | arm64:aarch64-*-musl | armhf:arm*-*-musleabihf)
+      # The system compiler already targets musl here: a native build
+      CC="cc"
+      STRIP="strip"
+      LDFLAGS="-static" ./configure --disable-fontenc
+      ;;
+    *)
+      CC="${TARGET_TRIPLE}-gcc"
+      STRIP="${TARGET_TRIPLE}-strip"
+      if ! command -v "$CC" >/dev/null 2>&1; then
+        echo "$CC not found. Build in an Alpine container for that" \
+             "architecture, or add a musl-cross toolchain to PATH" \
+             "(it should already be there in the devcontainer)." >&2
+        exit 1
+      fi
+      CC="$CC" LDFLAGS="-static" ./configure --host="$TARGET_TRIPLE" --build="$BUILD_TRIPLE" --disable-fontenc
+      ;;
+  esac
 else
   ./configure --disable-fontenc
   STRIP="strip"
 fi
 
-# Add the generated tables and the CP932-specific implementation to the build
-sed -i 's/^SRCS\(.*\)= \(.*\)$/SRCS\1= \2 builtin_ja.c other_ja.c gb18030_ranges.c/' Makefile
-sed -i 's/^OBJS\(.*\)= \(.*\)$/OBJS\1= \2 builtin_ja.o other_ja.o gb18030_ranges.o/' Makefile
+JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 
 if [ "$STATIC" = "1" ]; then
-  sed -i 's/^LDFLAGS\s*=.*/LDFLAGS = -static/' Makefile
-  make -j"$(nproc)" CC="$CC"
+  make -j"$JOBS" CC="$CC"
   "$STRIP" luit
   echo "Static build complete: $SRC_DIR/luit ($(du -h luit | cut -f1))"
   file luit
 else
-  make -j"$(nproc)"
+  make -j"$JOBS"
   echo "Native build complete: $SRC_DIR/luit"
 fi

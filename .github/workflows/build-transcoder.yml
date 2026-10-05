@@ -24,50 +24,44 @@ permissions:
 jobs:
   linux-musl:
     name: Linux musl static build (${{ matrix.arch }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # sha512: musl.cc's published SHA512SUMS. Keep in sync with
-          # .devcontainer/setup.sh.
+          # format: what `file` must report for the binary
           - arch: x64
-            triple: x86_64-linux-musl
-            # What `file` must report for the binary (checked in Verify)
+            runner: ubuntu-24.04
+            platform: linux/amd64
             format: "ELF 64-bit LSB .*x86-64"
-            sha512: 52abd1a56e670952116e35d1a62e048a9b6160471d988e16fa0e1611923dd108a581d2e00874af5eb04e4968b1ba32e0eb449a1f15c3e4d5240ebe09caf5a9f3
           - arch: arm64
-            triple: aarch64-linux-musl
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
             format: "ELF 64-bit LSB .*ARM aarch64"
-            sha512: 8695ff86979cdf30fbbcd33061711f5b1ebc3c48a87822b9ca56cde6d3a22abd4dab30fdcd1789ac27c6febbaeb9e5bde59d79d66552fae53d54cc1377a19272
           - arch: armhf
-            triple: arm-linux-musleabihf
+            runner: ubuntu-24.04-arm
+            platform: linux/arm/v7
             format: "ELF 32-bit LSB .*ARM, EABI5"
-            sha512: fe006d9176cedb453fd817f892f61f6bac273c15879f9c537e22c75b8da4995991211f6d23b0c0c97a87121fe55cf9f9f29cc3d1cf9376804535f07b6c017729
     steps:
       - uses: actions/checkout@v4.4.0
-      - name: Fetch the musl-cross toolchain (checksum-verified)
+      # Built natively in Alpine, whose compiler targets musl, on a runner of
+      # the same architecture, so every binary also runs the test suite.
+      - name: Build and test in Alpine
+        env:
+          # Alpine 3.24.2 (multi-arch index), pinned by digest
+          IMAGE: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          FORMAT: ${{ matrix.format }}
         run: |
-          curl -sSfL -o /tmp/musl-cross.tgz "https://musl.cc/${{ matrix.triple }}-cross.tgz"
-          echo "${{ matrix.sha512 }}  /tmp/musl-cross.tgz" | sha512sum -c -
-          tar xzf /tmp/musl-cross.tgz -C /tmp
-          echo "/tmp/${{ matrix.triple }}-cross/bin" >> "$GITHUB_PATH"
-      - name: Build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends autoconf
-      - name: Static build
-        run: bash transcoder/scripts/build.sh --musl --arch ${{ matrix.arch }}
-      # Only x64 is actually run; for arm64/armhf, this checks that the
-      # binary is a static one for the right architecture.
-      - name: Verify
-        run: |
-          file transcoder/src/luit
-          file transcoder/src/luit | grep -E '${{ matrix.format }}'
-          file transcoder/src/luit | grep -E 'static(ally|-pie) linked'
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            printf '\xfc\xe2' | transcoder/src/luit -c -encoding euc-jp-2007 | xxd
-            python3 tests/test_encodings.py
-          fi
+          docker run --rm --platform "$PLATFORM" -e ARCH -e FORMAT \
+            -v "$PWD":/src -w /src "$IMAGE" sh -euc '
+              apk add --no-cache build-base autoconf bash file python3
+              bash transcoder/scripts/build.sh --musl --arch "$ARCH"
+              file transcoder/src/luit | grep -E "$FORMAT"
+              file transcoder/src/luit | grep -E "static(ally|-pie) linked"
+              python3 tests/test_encodings.py
+            '
       - uses: actions/upload-artifact@v4.6.2
         with:
           name: transcoder-linux-${{ matrix.arch }}
@@ -92,12 +86,8 @@ jobs:
         run: brew install autoconf automake
       - name: Build (dynamically linked, since macOS can't statically link libSystem)
         run: |
-          cd transcoder/src
-          ./configure --disable-fontenc
-          sed -i '' 's/^SRCS\(.*\)= \(.*\)$/SRCS\1= \2 builtin_ja.c other_ja.c gb18030_ranges.c/' Makefile
-          sed -i '' 's/^OBJS\(.*\)= \(.*\)$/OBJS\1= \2 builtin_ja.o other_ja.o gb18030_ranges.o/' Makefile
-          make -j"$(sysctl -n hw.ncpu)"
-          strip luit
+          bash transcoder/scripts/build.sh
+          strip transcoder/src/luit
       - name: Verify
         run: |
           printf '\xfc\xe2' | transcoder/src/luit -c -encoding euc-jp-2007 | xxd

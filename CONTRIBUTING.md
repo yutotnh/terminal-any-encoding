@@ -15,8 +15,9 @@ To set things up manually, you need:
   tables depend on the ICU version, so don't bump it casually)
 - glibc's `iconv` command with its KOI8-T module (standard on glibc
   distributions; table generation cross-checks KOI8-T against it)
-- musl cross-toolchain (e.g. `x86_64-linux-musl-gcc`, needed for the
-  statically linked distribution build)
+- For the statically linked distribution build (`build.sh --musl`), either
+  Docker (build in an Alpine container, as CI does) or a musl
+  cross-toolchain (e.g. `x86_64-linux-musl-gcc`, set up in the devcontainer)
 
 Then run `npm install`.
 

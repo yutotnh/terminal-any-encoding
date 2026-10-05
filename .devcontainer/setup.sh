@@ -21,11 +21,12 @@ if [ "$installed_icu" != "$ICU_VERSION_PIN" ]; then
   echo "The conversion tables may have changed, so always verify with tools/gen-tables/gen_tables.py --check after generating." >&2
 fi
 
-# musl cross toolchains for the static distribution builds. build.sh needs
-# <triple>-gcc/<triple>-strip, which Ubuntu's musl-tools doesn't provide (it
-# only ships musl-gcc), so every architecture comes from musl.cc. The SHA-512
-# values are musl.cc's published SHA512SUMS; keep them in sync with
-# .github/workflows/build-transcoder.yml.
+# musl cross toolchains for local static builds (`build.sh --musl`). build.sh
+# needs <triple>-gcc/<triple>-strip, which Ubuntu's musl-tools doesn't provide
+# (it only ships musl-gcc), so every architecture comes from musl.cc. The
+# SHA-512 values are musl.cc's published SHA512SUMS. CI doesn't use these: it
+# builds in Alpine containers (.github/workflows/build-transcoder.yml), since
+# musl.cc doesn't answer GitHub's runners.
 declare -A MUSL_CROSS_SHA512=(
   [x86_64-linux-musl]=52abd1a56e670952116e35d1a62e048a9b6160471d988e16fa0e1611923dd108a581d2e00874af5eb04e4968b1ba32e0eb449a1f15c3e4d5240ebe09caf5a9f3
   [aarch64-linux-musl]=8695ff86979cdf30fbbcd33061711f5b1ebc3c48a87822b9ca56cde6d3a22abd4dab30fdcd1789ac27c6febbaeb9e5bde59d79d66552fae53d54cc1377a19272
