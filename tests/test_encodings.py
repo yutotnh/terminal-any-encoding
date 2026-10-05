@@ -10,6 +10,7 @@ Usage:
     cd transcoder/src && ./configure --disable-fontenc && make
     python3 tests/test_encodings.py
 """
+import faulthandler
 import fcntl
 import os
 import pty
@@ -819,6 +820,10 @@ def run_kg3_input_case(kg3_charset: str, text: str, expect: str) -> tuple[bool, 
 
 
 def main() -> int:
+    # Results as they happen, and a traceback if the process dies on a
+    # signal: otherwise a crash loses everything still buffered.
+    sys.stdout.reconfigure(line_buffering=True)
+    faulthandler.enable()
     if not LUIT.exists():
         print(f"NG: {LUIT} not found. Run configure && make in transcoder/src first.", file=sys.stderr)
         return 1
