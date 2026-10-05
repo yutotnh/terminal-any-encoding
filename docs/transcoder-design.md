@@ -219,7 +219,7 @@ controlling terminal is its stdin (`canInvert()`), luit inverts the tree
 
 1. It gives up the outer terminal (`TIOCNOTTY`, ignoring the SIGHUP this
    sends its own process group, i.e. itself; `releaseOuterTerminal()`). If
-   the system refuses, as macOS does for a session leader, nothing has
+   that fails, as it does on macOS (`ENOTTY`), nothing has
    changed yet and luit keeps the classic layout (`-v` says why).
 2. It forks the converter and detaches it (double fork, so it's not a child
    of the shell). The converter calls `setsid()` and takes the outer

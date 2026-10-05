@@ -271,7 +271,7 @@ def run_roundtrip_case(enc: str, text: str, expect_hex: str) -> tuple[bool, str]
     nbytes = len(bytes.fromhex(expect_hex))
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", str(nbytes), "-"])
+        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", str(nbytes)])
         os._exit(1)
     attrs = termios.tcgetattr(fd)
     attrs[3] = attrs[3] & ~termios.ECHO
@@ -313,7 +313,7 @@ def run_roundtrip_case(enc: str, text: str, expect_hex: str) -> tuple[bool, str]
 def run_drop_case(enc: str, text: str, reason: str) -> tuple[bool, str]:
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8", "-"])
+        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8"])
         os._exit(1)
     attrs = termios.tcgetattr(fd)
     attrs[3] = attrs[3] & ~termios.ECHO
@@ -350,7 +350,7 @@ def run_wave_dash_case(enc: str, text: str, label: str) -> tuple[bool, str]:
     """Verifies that regardless of which character was input, it always becomes U+301C after the round trip (i.e. converges to the same byte sequence)."""
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8", "-"])
+        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8"])
         os._exit(1)
     attrs = termios.tcgetattr(fd)
     attrs[3] = attrs[3] & ~termios.ECHO
@@ -493,7 +493,8 @@ def run_encode_last_arg_case(enc: str, command: str, expect_status: int, expect_
     os.close(fd)
     text = out.decode("utf-8", "replace")
     # No case's command line may run its "RAN" marker if it was refused
-    ok = got == expect_status and expect_output in text and not (expect_status == 1 and "RAN" in text)
+    # od's column spacing differs between GNU and BSD
+    ok = got == expect_status and expect_output in " ".join(text.split()) and not (expect_status == 1 and "RAN" in text)
     return ok, f"exit status {got} (expected {expect_status}), output {text!r}"
 
 
@@ -551,13 +552,14 @@ def run_notify_case() -> tuple[bool, str]:
 
 
 # Started like a terminal starts a shell (pty.fork: a session leader with
-# the pty as its controlling terminal), the process tree is inverted: the
-# started process becomes the shell itself, so its status is the shell's,
-# signals included.
+# the pty as its controlling terminal), the process tree is inverted on Linux:
+# the started process becomes the shell itself, so its status is the shell's,
+# signals included. Elsewhere (macOS) luit stays the shell's parent and
+# reports a signal as 128 + signal, as shells do.
 EXIT_STATUS_CASES = [
     ("exit 0", 0),
     ("exit 3", 3),
-    ("kill -TERM $$", -15),
+    ("kill -TERM $$", -15 if sys.platform == "linux" else 128 + 15),
 ]
 
 
@@ -584,7 +586,7 @@ def run_inverted_tree_case() -> tuple[bool, str]:
 def run_layout_case() -> tuple[bool, str]:
     """Started the way a terminal starts a shell, luit inverts the tree where
     a session leader may give up its controlling terminal (Linux) and keeps
-    the classic layout where it may not (macOS refuses TIOCNOTTY then). Either
+    the classic layout where it can't (TIOCNOTTY fails on macOS). Either
     way the shell runs and its exit status comes back, and whatever started
     luit (this process) isn't sent a signal."""
     pid, fd = pty.fork()

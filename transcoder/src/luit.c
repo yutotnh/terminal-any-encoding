@@ -1339,7 +1339,7 @@ canInvert(int sfd)
  * Gives up the outer terminal, so that this process can later take the inner
  * pty as its controlling terminal. Done before anything is forked: if the
  * system doesn't allow it, nothing has changed yet and condom() keeps the
- * classic layout. macOS (XNU) refuses TIOCNOTTY from a session leader.
+ * classic layout. On macOS it fails (ENOTTY, as started by a terminal).
  * TIOCNOTTY also sends SIGHUP to our own process group, i.e. only us.
  */
 static int
