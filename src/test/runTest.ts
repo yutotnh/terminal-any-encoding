@@ -22,16 +22,25 @@ function readVscodeVersionArg(argv: readonly string[]): string | undefined {
   return argv[flagIndex + 1];
 }
 
+// macOS's os.tmpdir() (/var/folders/...) is so long that VS Code's IPC
+// sockets in the user data dir go over the 104-byte limit for Unix socket
+// paths ("listen EINVAL").
+const TMP_ROOT = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+
 async function main(): Promise<void> {
+  const tempDirs: string[] = [];
+  const makeTempDir = (prefix: string): string => {
+    const dir = fs.mkdtempSync(path.join(TMP_ROOT, prefix));
+    tempDirs.push(dir);
+    return dir;
+  };
   try {
     const extensionDevelopmentPath = path.resolve(__dirname, "../../");
     const version = readVscodeVersionArg(process.argv);
     // A folder with a tasks.json, so VS Code itself resolves a
     // terminalAnyEncoding task through the provider (a window without a
     // folder doesn't offer configured tasks to fetchTasks()).
-    const workspaceDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "terminal-any-encoding-test-workspace-"),
-    );
+    const workspaceDir = makeTempDir("terminal-any-encoding-test-workspace-");
     fs.mkdirSync(path.join(workspaceDir, ".vscode"));
     fs.writeFileSync(
       path.join(workspaceDir, ".vscode", "tasks.json"),
@@ -52,8 +61,8 @@ async function main(): Promise<void> {
           // A fresh user data dir per run: the tests change user settings,
           // and a shared one would carry state over from earlier runs (or
           // other VS Code versions) and hide or fake failures.
-          `--user-data-dir=${fs.mkdtempSync(
-            path.join(os.tmpdir(), "terminal-any-encoding-test-user-data-"),
+          `--user-data-dir=${makeTempDir(
+            "terminal-any-encoding-test-user-data-",
           )}`,
           // Enables onDidWriteTerminalData (a proposed API) only for test
           // runs, so tests can read what a terminal renders. Not used by
@@ -67,7 +76,11 @@ async function main(): Promise<void> {
     await run("./suite/index");
   } catch (err) {
     console.error("Extension integration tests failed:", err);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    for (const dir of tempDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 }
 
