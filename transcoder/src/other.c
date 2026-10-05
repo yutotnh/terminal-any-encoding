@@ -440,13 +440,17 @@ stack_gb18030(unsigned c, OtherStatePtr s)
 	s->gb18030.buf[s->gb18030.buf_ptr++] = (int) c;
 	return -1;
     } else if (s->gb18030.buf_ptr == 1) {
+	/* PATCH(fork, gb18030): the trail byte of a 2-byte character is
+	 * 0x40-0x7E or 0x80-0xFE; upstream rejected 0x80 (dropping e.g. 亐,
+	 * 0x8180) and took 0x7F. And the second byte of a 4-byte sequence is
+	 * 0x30-0x39; upstream compared with decimal 30. */
 	if (c >= 0x40) {
 	    s->gb18030.buf_ptr = 0;
-	    if ((c == 0x80) || (c == 0xFF))
+	    if ((c == 0x7F) || (c == 0xFF))
 		return -1;
 	    else
 		return (int) ((unsigned) (s->gb18030.buf[0] << 8) + c);
-	} else if (c >= 30) {	/* 2Byte is (0x30 -> 0x39) */
+	} else if (c >= 0x30 && c <= 0x39) {	/* 2Byte is (0x30 -> 0x39) */
 	    s->gb18030.buf[s->gb18030.buf_ptr++] = (int) c;
 	    return -1;
 	} else {

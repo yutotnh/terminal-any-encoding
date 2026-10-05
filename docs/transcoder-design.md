@@ -270,6 +270,11 @@ macOS.
   turned into an unrelated mojibake character. Fixed by explicitly resetting
   `linear = 0` on the ASCII passthrough path (the first fork-local change to
   an upstream-derived file).
+- `stack_gb18030()` also took a 2-byte character's trail byte as 0x40-0xFE
+  except 0x80 and 0xFF, so the 144 characters with trail 0x80 (e.g. 亐,
+  `0x81 0x80`) silently disappeared while 0x7F was let through, and it
+  compared the second byte of a 4-byte sequence with decimal 30 instead of
+  0x30-0x39.
 - `gb18030_linear_to_codepoint()`: the supplementary-plane check
   (`linear >= 189000`) had no upper bound, so an invalid 4-byte sequence that
   was byte-range-valid but had a linear index past the maximum could produce
