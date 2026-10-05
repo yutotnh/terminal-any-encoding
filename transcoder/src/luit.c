@@ -82,14 +82,18 @@ int input_unencodable = 0;
 unsigned input_unencodable_char = 0;
 
 #ifdef USE_ICONV
-/* PATCH(fork, builtin first): upstream looks in the system's ".enc" files
- * (fontenc) before the built-in tables. Those exist wherever X11's font
- * encodings are installed (and FONT_ENCODINGS_DIRECTORY can point
- * anywhere), so the fork's ICU-derived tables, e.g. gbk-0 and big5hkscs-0,
- * would be replaced by different data depending on the machine. */
+/* PATCH(fork, built-in tables only): upstream also looks in the system's
+ * ".enc" files (fontenc, first), the C library's iconv, and finally takes
+ * bytes as code points (posix). What those give depends on the machine:
+ * with X11's font encodings installed, gbk-0 and big5hkscs-0 decoded with
+ * their data instead of ours, and musl's iconv, which the distributed
+ * binaries have, knows none of CP1253/1254/1256/1257/1258/874. Every
+ * charset the supported encodings use has a built-in table (builtin.c or
+ * the fork's builtin_ja.c), so only those are used (-prefer can name one
+ * other source to use instead). */
 UM_MODE lookup_order[] =
 {
-    umBUILTIN, umFONTENC, umICONV, umPOSIX, umNONE
+    umBUILTIN, umNONE
 };
 #endif
 

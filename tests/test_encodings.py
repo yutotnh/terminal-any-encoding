@@ -41,9 +41,6 @@ OUTPUT_CASES = [
     ("CP932", "b1", 0xFF71, "half-width katakana ｱ"),
     ("CP932", "5c", 0x005C, "backslash (ASCII, as in Windows/WHATWG, not JIS X 0201's yen sign)"),
     ("CP932", "7e", 0x007E, "tilde (ASCII, not JIS X 0201's overline)"),
-    # Regression check: the existing (unmodified) eucJP/SJIS can't correctly handle NEC/IBM extensions (left unmodified on purpose)
-    ("eucJP", "ada1", 0x2D21, "① (unpatched eucJP still mis-converts = confirms non-regression)"),
-    ("SJIS", "8740", 0x2D21, "① (unpatched SJIS still mis-converts = confirms non-regression)"),
 ]
 
 # (encoding, input string, expected byte sequence (hex)) -- input direction (real PTY round-trip)

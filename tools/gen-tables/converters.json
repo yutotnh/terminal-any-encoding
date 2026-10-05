@@ -109,6 +109,118 @@
       "icu_converter": "ibm-865",
       "plane": "raw1byte",
       "comment": "CP865 (Nordic DOS). Same reason and approach as CP852/857/1125. Reuses the existing \"CP 865\" charset row's xlfd as-is (no change needed to charset.c, just adding the table)."
+    },
+    {
+      "name": "microsoft-cp1250",
+      "icu_converter": "windows-1250",
+      "plane": "raw1byte",
+      "comment": "Windows-1250. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1251",
+      "icu_converter": "windows-1251",
+      "plane": "raw1byte",
+      "comment": "Windows-1251. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1252",
+      "icu_converter": "windows-1252",
+      "plane": "raw1byte",
+      "comment": "Windows-1252. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1253",
+      "icu_converter": "windows-1253",
+      "plane": "raw1byte",
+      "comment": "Windows-1253. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1254",
+      "icu_converter": "windows-1254",
+      "plane": "raw1byte",
+      "comment": "Windows-1254. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1255",
+      "icu_converter": "windows-1255",
+      "plane": "raw1byte",
+      "comment": "Windows-1255. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1256",
+      "icu_converter": "windows-1256",
+      "plane": "raw1byte",
+      "comment": "Windows-1256. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1257",
+      "icu_converter": "windows-1257",
+      "plane": "raw1byte",
+      "comment": "Windows-1257. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp1258",
+      "icu_converter": "windows-1258",
+      "plane": "raw1byte",
+      "comment": "Windows-1258. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "microsoft-cp874",
+      "icu_converter": "windows-874",
+      "plane": "raw1byte",
+      "comment": "Windows-874 (Thai). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "ibm-cp437",
+      "icu_converter": "ibm-437",
+      "plane": "raw1byte",
+      "comment": "CP437 (DOS US). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "ibm-cp850",
+      "icu_converter": "ibm-850",
+      "plane": "raw1byte",
+      "comment": "CP850 (DOS Western Europe). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "ibm-cp866",
+      "icu_converter": "ibm-866",
+      "plane": "raw1byte",
+      "comment": "CP866 (DOS Cyrillic). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "iso8859-11",
+      "icu_converter": "ISO-8859-11",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-11. Upstream's builtin.c has 8859-1 to -10 and -15 only; stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "iso8859-13",
+      "icu_converter": "ISO-8859-13",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-13. Upstream's builtin.c has 8859-1 to -10 and -15 only; stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "iso8859-14",
+      "icu_converter": "ISO-8859-14",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-14. Upstream's builtin.c has 8859-1 to -10 and -15 only; stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "iso8859-16",
+      "iconv_lite": "iso885916",
+      "plane": "raw1byte",
+      "crosscheck": {
+        "python": "iso8859_16",
+        "glibc": "ISO-8859-16"
+      },
+      "comment": "ISO 8859-16. ICU has no converter for it, so like KOI8-T the table comes from iconv-lite and must match Python's and glibc's byte for byte. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+    },
+    {
+      "name": "jisx0201.1976-0",
+      "icu_converter": "euc-jp-2007",
+      "plane": "kana",
+      "comment": "JIS X 0201's half-width katakana (0xA1-0xDF), EUC-JP's G2 (SS2 0x8E). Only the GR half: none of the supported encodings uses JIS X 0201's GL half (JIS-Roman). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
     }
   ],
   "gb18030_4byte_ranges": {

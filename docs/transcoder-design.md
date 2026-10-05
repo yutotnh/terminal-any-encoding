@@ -55,13 +55,18 @@ regenerating against the current ICU environment matches
 `tools/gen-tables/golden/tables.sha256`. The generated `builtin_ja.c`/
 `other_ja.c` are not hand-edited.
 
-The built-in tables are looked up before anything else (`lookup_order` in
-`luit.c`). Upstream looks in X11's font encodings (`.enc` files listed in an
-`encodings.dir` found at build time, or named by `FONT_ENCODINGS_DIRECTORY`)
-first, so wherever those are installed (Debian/Ubuntu's `xfonts-encodings`)
-`gbk-0` and `big5hkscs-0` decoded with that data instead of ours, and the
-fallback no longer applied. CI's native test job installs `xfonts-encodings`
-to keep that covered.
+Only the built-in tables are used (`lookup_order` in `luit.c`). Upstream
+also looks in X11's font encodings (`.enc` files listed in an
+`encodings.dir` found at build time, or named by
+`FONT_ENCODINGS_DIRECTORY`), the C library's iconv, and finally takes bytes
+as code points, all of which depend on the machine: with Debian/Ubuntu's
+`xfonts-encodings` installed, `gbk-0` and `big5hkscs-0` decoded with that
+data instead of ours, and musl's iconv, which the distributed binaries have,
+has no CP1253/1254/1256/1257/1258/874 at all (luit fell back to ISO 8859-1
+for them). So every charset a supported encoding uses has a built-in table:
+upstream's `builtin.c` where it has one, generated here otherwise (the
+Windows code pages, CP437/850/866, ISO 8859-11/13/14/16, and JIS X 0201's
+katakana for EUC-JP). CI's native test job installs `xfonts-encodings`.
 
 The one exception is KOI8-T, which ICU has no converter for. Its table
 (`"iconv_lite"` in `converters.json`) comes from iconv-lite, the library

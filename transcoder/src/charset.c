@@ -113,6 +113,14 @@ static FontencCharsetRec fontencCharsets[] =
     {"CP 1251",        T_128,   0,   "microsoft-cp1251", 0x80,   NULL, NULL},
     {"CP 1252",        T_128,   0,   "microsoft-cp1252", 0x80,   NULL, NULL},
     {"CP 1255",        T_128,   0,   "microsoft-cp1255", 0x80,   NULL, NULL},
+    /* PATCH(fork, encodings): Windows code pages stock luit had no charset
+     * for (it fell back to ISO 8859-1). Tables in builtin_ja.c. */
+    {"CP 1253",        T_128,   0,   "microsoft-cp1253", 0x80,   NULL, NULL},
+    {"CP 1254",        T_128,   0,   "microsoft-cp1254", 0x80,   NULL, NULL},
+    {"CP 1256",        T_128,   0,   "microsoft-cp1256", 0x80,   NULL, NULL},
+    {"CP 1257",        T_128,   0,   "microsoft-cp1257", 0x80,   NULL, NULL},
+    {"CP 1258",        T_128,   0,   "microsoft-cp1258", 0x80,   NULL, NULL},
+    {"CP 874",         T_128,   0,   "microsoft-cp874",  0x80,   NULL, NULL},
 
     {"CP 437",         T_128,   0,   "ibm-cp437",        0x80,   NULL, NULL},
     {"CP 850",         T_128,   0,   "ibm-cp850",        0x80,   NULL, NULL},
@@ -219,30 +227,28 @@ compare1(const char *s, const char *t, size_t n)
 
 #define UNICODE_REPLACEMENT_CHAR 0xFFFD
 
-/* PATCH(fork, fallback): applies the fallback policy only to charsets added
- * fork-local (jisx0208-2007-0 / jisx0212.1990-0). Other upstream charsets
- * (GB2312/KSC5601/CNS11643, etc.) are out of scope and keep stock's
- * behavior (luitMapCodeValue's identity fallback) — directly changing
- * luitMapCodeValue itself was confirmed by measurement to break unrelated
- * processing ("Fallback design for conversion failures" in docs/transcoder-design.md).
+/* PATCH(fork, fallback): applies the fallback policy to the charsets whose
+ * table the fork generates (builtin_ja.c), and only those. Other upstream
+ * charsets keep stock's behavior (luitMapCodeValue's identity fallback) --
+ * directly changing luitMapCodeValue itself was confirmed by measurement to
+ * break unrelated processing ("Fallback design for conversion failures" in
+ * docs/transcoder-design.md). Going by the generated list rather than a
+ * list of names here means a new table can't be left out (CP865's once
+ * was).
  */
 #ifdef USE_ICONV
 static int
 isFallbackManagedXlfd(const char *xlfd)
 {
-    return xlfd != NULL &&
-	(!strcmp(xlfd, "jisx0208-2007-0") || !strcmp(xlfd, "jisx0212.1990-0") ||
-	 !strcmp(xlfd, "cp852-direct-0") || !strcmp(xlfd, "cp857-direct-0") ||
-	 !strcmp(xlfd, "cp1125-direct-0") || !strcmp(xlfd, "macroman-direct-0") ||
-	 !strcmp(xlfd, "koi8t-direct-0") ||
-	 /* PATCH(fork, encodings): 3 entries whose xlfd data was missing and unmapped
-	  * under musl, replaced with our own table. Since they go through
-	  * FontencCharsetRecode/Reverse (ISO2022), just adding them here
-	  * is enough for the U+FFFD replacement to take effect. */
-	 !strcmp(xlfd, "big5.eten-0") || !strcmp(xlfd, "gb2312.1980-0") ||
-	 !strcmp(xlfd, "ksc5601.1987-0") ||
-	 /* PATCH(fork, fallback): CP865's table, also replaced with our own. */
-	 !strcmp(xlfd, "ibm-cp865"));
+    int n;
+
+    if (xlfd == NULL)
+	return 0;
+    for (n = 0; builtin_encodings_ja[n].name != NULL; ++n) {
+	if (!strcmp(xlfd, builtin_encodings_ja[n].name))
+	    return 1;
+    }
+    return 0;
 }
 #endif /* USE_ICONV */
 
@@ -656,6 +662,13 @@ static const LocaleCharsetRec localeCharsets[] =
     {"CP1251",     0, 2, "ASCII", NULL,         "CP 1251",       NULL,         NULL},
     {"CP1252",     0, 2, "ASCII", NULL,         "CP 1252",       NULL,         NULL},
     {"CP1255",     0, 2, "ASCII", NULL,         "CP 1255",       NULL,         NULL},
+    /* PATCH(fork, encodings) */
+    {"CP1253",     0, 2, "ASCII", NULL,         "CP 1253",       NULL,         NULL},
+    {"CP1254",     0, 2, "ASCII", NULL,         "CP 1254",       NULL,         NULL},
+    {"CP1256",     0, 2, "ASCII", NULL,         "CP 1256",       NULL,         NULL},
+    {"CP1257",     0, 2, "ASCII", NULL,         "CP 1257",       NULL,         NULL},
+    {"CP1258",     0, 2, "ASCII", NULL,         "CP 1258",       NULL,         NULL},
+    {"CP874",      0, 2, "ASCII", NULL,         "CP 874",        NULL,         NULL},
     {"CP437",      0, 2, "ASCII", NULL,         "CP 437",        NULL,         NULL},
     {"CP850",      0, 2, "ASCII", NULL,         "CP 850",        NULL,         NULL},
     {"CP852",      0, 2, "ASCII", NULL,         "CP 852",        NULL,         NULL},

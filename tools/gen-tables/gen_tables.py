@@ -127,6 +127,23 @@ def gen_plane_raw1byte(converter: str) -> list[tuple[int, int]]:
     return rows
 
 
+def gen_plane_kana(converter: str) -> list[tuple[int, int]]:
+    """Builds the half-width katakana half of JIS X 0201 (0xA1-0xDF), the
+    charset luit uses for EUC-JP's G2, by asking an EUC-JP converter for
+    each SS2 (0x8E) sequence. Keyed on the GR byte, as luit looks up
+    "JIS X 0201:GR" (shift 0x80)."""
+    payload = bytearray()
+    for b in range(0xA1, 0xE0):
+        payload += bytes([0x8E, b, 0x0A])
+    lines = run_uconv(converter, bytes(payload)).split(b"\n")
+    rows = []
+    for i, b in enumerate(range(0xA1, 0xE0)):
+        ch = lines[i].decode("utf-8") if i < len(lines) else ""
+        if len(ch) == 1 and ch != "\ufffd":
+            rows.append((b, ord(ch)))
+    return rows
+
+
 def gen_plane_raw2byte(converter: str) -> list[tuple[int, int]]:
     """Collects the raw 2-byte space of things like SJIS directly as source (no coordinate conversion).
 
@@ -326,6 +343,7 @@ PLANE_GENERATORS = {
     "g3": gen_plane_g3,
     "raw2byte": gen_plane_raw2byte,
     "raw1byte": gen_plane_raw1byte,
+    "kana": gen_plane_kana,
 }
 
 
@@ -345,6 +363,8 @@ def icu_bytes_to_source(plane: str, b: bytes) -> int | None:
         return b[0]
     if plane == "raw2byte" and len(b) == 2:
         return (b[0] << 8) | b[1]
+    if plane == "kana" and len(b) == 2 and b[0] == 0x8E:
+        return b[1]
     return None
 
 
