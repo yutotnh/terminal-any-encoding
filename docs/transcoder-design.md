@@ -217,21 +217,25 @@ When started the way terminals start shells, as a session leader whose
 controlling terminal is its stdin (`canInvert()`), luit inverts the tree
 (`condomInverted()` in `luit.c`):
 
-1. It forks the converter and detaches it (double fork, so it's not a child
-   of the shell); the converter calls `setsid()` to leave the process group.
-2. It gives up the outer terminal (`TIOCNOTTY`, ignoring the SIGHUP this
-   sends its own group) and tells the converter, which takes the outer
-   terminal as its controlling terminal (`TIOCSCTTY`). The converter then
-   gets SIGWINCH when VS Code resizes the terminal and SIGHUP when it closes,
-   as luit always did.
+1. It gives up the outer terminal (`TIOCNOTTY`, ignoring the SIGHUP this
+   sends its own process group, i.e. itself; `releaseOuterTerminal()`). If
+   the system refuses, as macOS does for a session leader, nothing has
+   changed yet and luit keeps the classic layout (`-v` says why).
+2. It forks the converter and detaches it (double fork, so it's not a child
+   of the shell). The converter calls `setsid()` and takes the outer
+   terminal as its controlling terminal (`TIOCSCTTY`), so it gets SIGWINCH
+   when VS Code resizes the terminal and SIGHUP when it closes, as luit
+   always did.
 3. It takes the inner pty as controlling terminal and execs the shell, so the
    pid VS Code knows is the shell's. Rejection reports carry that pid.
 
 The converter exits when the inner pty closes, i.e. once the shell and
 everything it started are gone. Anything else (no controlling terminal, or
-`-p`) keeps the classic layout. Tests check the tree, resizing, closing the
-outer terminal and the exit status, on glibc and musl builds; macOS isn't
-covered by CI (its `TIOCNOTTY`/`TIOCSCTTY` semantics are the same on paper).
+`-p`) keeps the classic layout. Upstream's "child failed" `SIGABRT` to the
+parent is only sent in the classic layout: with the inverted tree the parent
+is whatever started luit (VS Code). Tests check the tree, resizing, closing
+the outer terminal and the exit status, on glibc and musl builds and on
+macOS.
 
 ## Known upstream bugs and fixes
 

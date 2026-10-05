@@ -581,6 +581,33 @@ def run_inverted_tree_case() -> tuple[bool, str]:
     return ok, f"started process runs {exe}, its children: {child_exes}"
 
 
+def run_layout_case() -> tuple[bool, str]:
+    """Started the way a terminal starts a shell, luit inverts the tree where
+    a session leader may give up its controlling terminal (Linux) and keeps
+    the classic layout where it may not (macOS refuses TIOCNOTTY then). Either
+    way the shell runs and its exit status comes back, and whatever started
+    luit (this process) isn't sent a signal."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execv(str(LUIT), ["luit", "-v", "-encoding", "euc-jp-2007", "--", "sh", "-c", "echo ran; exit 5"])
+    out = b""
+    try:
+        while True:
+            d = os.read(fd, 1024)
+            if not d:
+                break
+            out += d
+    except OSError:
+        pass
+    _, status = os.waitpid(pid, 0)
+    os.close(fd)
+    code = os.waitstatus_to_exitcode(status)
+    note = next((l for l in out.splitlines() if b"classic layout" in l), b"inverted")
+    classic = note != b"inverted"
+    ok = code == 5 and b"ran" in out and classic == (sys.platform != "linux")
+    return ok, f"exit status {code}, {note.decode(errors='replace').strip()}"
+
+
 def run_resize_case() -> tuple[bool, str]:
     """With the inverted tree the converter owns the outer terminal, so a
     resize there (VS Code's) still reaches the shell's pty."""
@@ -957,6 +984,7 @@ def main() -> int:
     # (name, function, needs Linux: /proc, or the Linux-only tab title)
     for name, fn, linux_only in [
             ("inverted (as started by a terminal)", run_inverted_tree_case, True),
+            ("inverted on Linux, classic elsewhere, shell runs either way", run_layout_case, False),
             ("resize reaches the shell", run_resize_case, False),
             ("closing the terminal ends shell and converter", run_hangup_case, True),
             ("tab title follows the foreground program", run_title_case, True),
