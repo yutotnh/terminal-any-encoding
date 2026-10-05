@@ -94,14 +94,16 @@ suite("open terminals with multiple encodings simultaneously", function () {
         terminals[i].sendText(targets[i].command, true);
       }
 
-      // Wait for each expected string to appear, independently
+      // Wait for each expected string to appear, independently. On a
+      // timeout, fall through: the checks below say which terminal is
+      // missing it and show what it printed.
       await waitFor(
         () =>
           targets.every((t, i) =>
             (buffers.get(terminals[i]) ?? "").includes(t.expect),
           ),
         30000,
-      );
+      ).catch(() => undefined);
 
       for (let i = 0; i < targets.length; i++) {
         const data = buffers.get(terminals[i]) ?? "";
