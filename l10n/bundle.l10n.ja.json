@@ -1,0 +1,15 @@
+{
+  "Select an encoding": "エンコーディングを選択してください",
+  "Unknown encoding: \"{0}\". Run \"Open Terminal with Encoding...\" to see the supported encodings.": "未知のエンコーディングです: \"{0}\"。対応エンコーディング一覧は \"エンコーディングを指定してターミナルを開く...\" から確認できます。",
+  "Transcoder not found ({0}). Try reinstalling the extension, or report it: https://github.com/yutotnh/terminal-any-encoding/issues": "トランスコーダが見つかりません ({0})。拡張機能を再インストールしてみてください。解決しない場合は次のURLから報告してください: https://github.com/yutotnh/terminal-any-encoding/issues",
+  "No {0} locale is installed on this host, so programs in this terminal may print garbled non-ASCII text. Generate one (e.g. {1}) and open a new terminal.": "このホストには {0} のロケールがインストールされていないため、このターミナル内のプログラムが ASCII 以外の文字を文字化けして表示することがあります。ロケール (例: {1}) を生成してから、新しいターミナルを開いてください。",
+  "Don't Show Again": "今後表示しない",
+  "{0} in your environment names a different encoding and takes precedence over LANG={1}, so programs in this terminal may print garbled text. Unset it or set it to {1}.": "環境変数の {0} が別のエンコーディングを指していて LANG={1} より優先されるため、このターミナル内のプログラムの出力が文字化けすることがあります。この変数を削除するか、{1} に設定してください。",
+  "Select current working directory for new terminal": "新しいターミナルの作業ディレクトリを選択してください",
+  "The input wasn't sent because it contains characters that {0} can't represent.": "{0} で表せない文字が含まれていたため、入力を送信しませんでした。",
+  "The input wasn't sent because {0} can't represent \"{1}\".": "{0} では「{1}」を表せないため、入力を送信しませんでした。",
+  "recently used": "最近使用したもの",
+  "other encodings": "その他のエンコーディング",
+  "A \"{0}\" task needs \"encoding\" and \"command\" (strings), and optionally \"args\" (strings) and \"options\" (\"cwd\", \"env\").": "\"{0}\" タスクには \"encoding\" と \"command\" (文字列) が必要です。省略可能な項目は \"args\" (文字列) と \"options\" (\"cwd\"、\"env\") です。",
+  "The command of a \"{0}\" task has characters that couldn't be read. Save tasks.json as UTF-8 (VS Code does when you edit it there).": "\"{0}\" タスクのコマンドに読み取れない文字があります。tasks.json を UTF-8 で保存してください (VS Code で編集すると UTF-8 で保存されます)。"
+}

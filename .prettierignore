@@ -1,0 +1,16 @@
+# Prettier reads .gitignore by default, so build artifacts etc. don't need to be listed here.
+# Only list Prettier-specific exclusions here that aren't already in .gitignore.
+
+# transcoder/ (the luit fork) is excluded from formatting to keep the diff
+# against upstream minimal. See CONTRIBUTING.md#repository-notes.
+# transcoder/ itself is tracked, so it's not in .gitignore and needs to be
+# listed explicitly here.
+transcoder/
+
+# npm manages this itself, so don't format it (the diff comes right back on the next npm install)
+package-lock.json
+
+# Claude Code's local-only config (ignored by the global gitignore, not in this
+# repo's .gitignore). .claude/skills/ is tracked, so keep formatting it.
+.claude/*
+!.claude/skills/

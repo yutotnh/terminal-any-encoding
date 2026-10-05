@@ -1,0 +1,134 @@
+# This workflow is managed by gh actions-lock.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gen-tables-check:
+    name: Conversion table reproducibility check
+    # The golden hashes are tied to icu_version_expected in
+    # tools/gen-tables/converters.json; Ubuntu 26.04's apt ships that ICU.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - name: Install ICU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libicu-dev icu-devtools
+          icuinfo | grep -m1 version
+      # KOI8-T's table comes from the iconv-lite devDependency.
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
+      - name: Verify against the golden hash
+        run: python3 tools/gen-tables/gen_tables.py --check
+
+  build-and-test:
+    name: Native build + test suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential autoconf
+      - name: Build transcoder
+        run: bash transcoder/scripts/build.sh
+      - name: Run table-driven tests
+        run: python3 tests/test_encodings.py
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck transcoder/scripts/*.sh .devcontainer/setup.sh
+
+  # macOS takes different paths in places (process names fixed at exec, so
+  # no tab-title tracking; no /proc), and nothing else exercises it.
+  build-and-test-macos:
+    name: Native build + test suite (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - name: Install build dependencies
+        run: brew install autoconf
+      - name: Build transcoder
+        run: bash transcoder/scripts/build.sh
+      - name: Run table-driven tests
+        run: python3 tests/test_encodings.py
+
+  spellcheck:
+    name: Spell check (Japanese docs excluded)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npx --yes cspell@8 lint --no-progress "**/*.{ts,js,c,h,md}" --exclude "docs/**/*.md" --exclude "**/*.ja.md"
+
+  lint-and-unit-test:
+    name: TypeScript lint + unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run test:unit
+
+  # Verifies the lower bound of engines.vscode against real versions (see
+  # AGENTS.md#lower-bound-of-enginesvscode). Also covers the fact that
+  # onDidWriteTerminalData (a proposed API), used by some tests, requires
+  # --enable-proposed-api.
+  integration-test:
+    name: VS Code integration tests (${{ matrix.vscode-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        vscode-version: ["1.73.0", "1.85.0", "1.94.0", "stable"]
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential autoconf xvfb fish zsh
+      - run: npm ci --ignore-scripts
+      - name: Build transcoder (the extension requires transcoder/bin/luit at startup)
+        run: |
+          bash transcoder/scripts/build.sh
+          mkdir -p transcoder/bin
+          cp transcoder/src/luit transcoder/bin/luit
+      - name: Run integration tests
+        run: xvfb-run -a npm run test:integration -- --vscode-version ${{ matrix.vscode-version }}
+
+  integration-test-macos:
+    name: VS Code integration tests (macOS, stable)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - name: Install build dependencies
+        run: brew install autoconf fish
+      - run: npm ci --ignore-scripts
+      - name: Build transcoder (the extension requires transcoder/bin/luit at startup)
+        run: |
+          bash transcoder/scripts/build.sh
+          mkdir -p transcoder/bin
+          cp transcoder/src/luit transcoder/bin/luit
+      - name: Run integration tests
+        run: npm run test:integration -- --vscode-version stable

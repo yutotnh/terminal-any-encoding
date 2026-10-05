@@ -1,0 +1,38 @@
+# Include only the extension's build output in the VSIX.
+#
+# Note: vsce applies negation patterns (starting with "!") as a group
+# "after all exclusion patterns," regardless of where they appear in this
+# file (see collectFiles in node_modules/@vscode/vsce/out/package.js). So a
+# .gitignore-style order-dependent idiom, where a later negation pattern
+# undoes part of an earlier one, doesn't work here. You can't re-include
+# all of out/ and then selectively exclude parts of it again (confirmed by
+# testing). Since no line excludes anything under
+# out/ in the first place, no negation pattern is needed there — just list
+# what you want excluded individually.
+.vscode/**
+.devcontainer/**
+.github/**
+.claude/**
+transcoder/vendor/**
+transcoder/src/**
+transcoder/scripts/**
+!transcoder/bin/**/luit
+tools/**
+tests/**
+docs/**
+images/screenshot.png
+*.md
+!README.md
+!README.ja.md
+!THIRD-PARTY-NOTICES.md
+!CHANGELOG.md
+cspell.json
+.prettierignore
+.nvmrc
+tsconfig.json
+.eslintrc*
+node_modules/**
+src/**
+out/test/**
+**/*.map
+**/.gitignore

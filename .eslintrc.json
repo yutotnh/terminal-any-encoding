@@ -1,0 +1,46 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
+  "plugins": ["@typescript-eslint", "n"],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": "error"
+  },
+  "ignorePatterns": ["out", "node_modules", "*.js"],
+  "overrides": [
+    {
+      // The extension itself (runs inside the Extension Host) is guarded, as
+      // a safety net, against the Node.js runtime bundled with the lower
+      // bound of engines.vscode (1.73.0 -> Node 16.14.2). Only covers global
+      // references and module members; prototype methods like Array#at are
+      // out of scope, caught separately by tsconfig.json's "lib".
+      "files": ["src/**/*.ts"],
+      "excludedFiles": ["src/test/**/*.ts"],
+      "rules": {
+        "n/no-unsupported-features/node-builtins": [
+          "error",
+          { "version": "16.14.2" }
+        ],
+        "n/no-unsupported-features/es-syntax": [
+          "error",
+          { "version": "16.14.2" }
+        ]
+      }
+    },
+    {
+      // Tests run on the dev/CI machine (the .nvmrc version), so the runtime floor is handled separately.
+      "files": ["src/test/**/*.ts"],
+      "rules": {
+        "n/no-unsupported-features/node-builtins": [
+          "error",
+          { "version": ">=20.0.0" }
+        ],
+        "n/no-unsupported-features/es-syntax": [
+          "error",
+          { "version": ">=20.0.0" }
+        ]
+      }
+    }
+  ]
+}

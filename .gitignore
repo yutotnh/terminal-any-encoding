@@ -1,0 +1,36 @@
+# Node
+node_modules/
+out/
+dist/
+*.vsix
+
+# @vscode/test-electron (downloaded VS Code binaries, hundreds of MB to over 1GB)
+.vscode-test/
+
+# Transcoder build artifacts
+transcoder/build/
+transcoder/src/luit
+transcoder/src/*.o
+transcoder/src/Makefile
+transcoder/src/config.h
+transcoder/src/config.log
+transcoder/src/config.status
+transcoder/src/config.h.in~
+# Byproducts upstream Makefile.in's clean rule (`*~ *.bak *.BAK *.out *.tmp`)
+# can produce. man2html.tmp is one of these (confirmed it actually occurs during a build)
+transcoder/src/*.tmp
+transcoder/src/*~
+transcoder/src/*.bak
+transcoder/src/*.BAK
+transcoder/src/*.out
+bin/
+
+# Generated conversion tables
+tools/gen-tables/out/
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc

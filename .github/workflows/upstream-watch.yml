@@ -1,0 +1,48 @@
+# This workflow is managed by gh actions-lock.
+
+name: Upstream watch (luit)
+
+# Detects new luit upstream (invisible-island.net) releases and files an
+# issue. Forked C code is out of Dependabot's scope, so this dedicated
+# workflow substitutes for it.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Every Monday 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - name: Get the version currently forked
+        id: current
+        run: |
+          v=$(grep -oP '(?<=LUIT_VERSION ")[^"]+' transcoder/vendor/luit-upstream/version.h)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Get the latest upstream version
+        id: upstream
+        run: |
+          curl -sL -o /tmp/luit.tar.gz https://invisible-island.net/datafiles/release/luit.tar.gz
+          mkdir -p /tmp/luit-check
+          tar xzf /tmp/luit.tar.gz -C /tmp/luit-check --strip-components=1
+          v=$(grep -oP '(?<=LUIT_VERSION ")[^"]+' /tmp/luit-check/version.h)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: File an issue if the versions differ
+        if: steps.current.outputs.version != steps.upstream.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ steps.current.outputs.version }}
+          UPSTREAM: ${{ steps.upstream.outputs.version }}
+        run: |
+          title="luit upstream has been updated: ${CURRENT} -> ${UPSTREAM}"
+          exists=$(gh issue list --search "in:title \"$title\"" --json number --jq '. | length')
+          if [ "$exists" = "0" ]; then
+            body="The latest luit upstream (https://invisible-island.net/luit/) version is now ${UPSTREAM}. The version currently forked is ${CURRENT}. The forked differences are recorded in docs/transcoder-design.md. Please review the upstream changes and catch up if needed."
+            gh issue create --title "$title" --body "$body"
+          fi

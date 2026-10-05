@@ -1,0 +1,19 @@
+{
+  "extension.title": "Terminal Any Encoding",
+  "extension.description": "VS Code の統合ターミナルで UTF-8 以外の文字エンコーディング (EUC-JP, Shift JIS, GBK, Big5-HKSCS, EUC-KR など、VS Code が対応する Unicode 以外の45種類すべて) を扱えるようにする",
+  "extension.category": "Terminal Any Encoding",
+  "command.openTerminal.title": "エンコーディングを指定してターミナルを開く...",
+  "command.openDefaultEncodingTerminal.title": "既定のエンコーディングでターミナルを開く",
+  "config.defaultEncoding.description": "「既定のエンコーディングでターミナルを開く」と「🌐 Default Encoding」ターミナルプロファイルで使うエンコーディング。空欄の場合は毎回選択します。",
+  "config.defaultEncoding.picker": "毎回選択する",
+  "config.warnAboutLocale.description": "ターミナルのエンコーディングに合うロケールを使えないときに警告します。対象は、ホストに該当するロケールがインストールされていない場合と、環境変数の LC_* が別のエンコーディングを指している場合です。このようなターミナルでは、プログラムの出力が文字化けすることがあります。",
+  "config.shellProfile.linux.description": "Linux で、この拡張機能のターミナルの内側で起動するシェルのターミナルプロファイル (`#terminal.integrated.profiles.linux#` の名前)。空欄の場合は `#terminal.integrated.defaultProfile.linux#` を使います。それがこの拡張機能のプロファイルの場合は `$SHELL` を使います。",
+  "config.shellProfile.osx.description": "macOS で、この拡張機能のターミナルの内側で起動するシェルのターミナルプロファイル (`#terminal.integrated.profiles.osx#` の名前)。空欄の場合は `#terminal.integrated.defaultProfile.osx#` を使います。それがこの拡張機能のプロファイルの場合は `$SHELL` を使います。",
+  "capabilities.untrustedWorkspaces.description": "制限モードでは、ワークスペースで設定したターミナルプロファイル (shellProfile) は無視されます。VS Code がワークスペースのターミナルプロファイルを無視するのと同じです。",
+  "taskDefinition.encoding.description": "タスクのシェルを動かすエンコーディング (「エンコーディングを指定してターミナルを開く...」で選ぶものと同じ)。",
+  "taskDefinition.command.description": "実行するコマンド。\"shell\" タスクと同じく、`args` がない場合はコマンドライン全体として扱います。",
+  "taskDefinition.args.description": "コマンドに渡す引数。シェルに合わせてクォートされます。",
+  "taskDefinition.options.description": "タスクの追加オプション。",
+  "taskDefinition.options.cwd.description": "作業ディレクトリ。省略した場合はワークスペースフォルダーを使います。",
+  "taskDefinition.options.env.description": "タスクに追加する環境変数。"
+}

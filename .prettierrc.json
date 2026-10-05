@@ -1,0 +1,8 @@
+{
+  "overrides": [
+    {
+      "files": [".eslintrc.json"],
+      "options": { "parser": "jsonc", "trailingComma": "none" }
+    }
+  ]
+}

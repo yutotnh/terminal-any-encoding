@@ -1,0 +1,145 @@
+# This workflow is managed by gh actions-lock.
+
+name: Release
+
+# Triggered by a tag (v*): verifies, builds VSIXes for all 7 platform targets,
+# and publishes them to both the Marketplace and Open VSX.
+#
+# Nothing is published until every target has been packaged, so a failure in
+# one target can't leave a partial release behind.
+#
+# Required repository settings:
+#   - Marketplace: no PAT is stored. `vsce publish --azure-credential` signs in
+#     through GitHub OIDC -> Microsoft Entra ID (azure/login). Create an Entra
+#     app registration with a federated credential for this repository's
+#     `release` environment, add it as a member of the Marketplace publisher,
+#     and set its IDs as the AZURE_CLIENT_ID / AZURE_TENANT_ID secrets.
+#   - Open VSX: OVSX_PAT secret (a token signed under the Eclipse Publisher
+#     Agreement).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify before release
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - name: Tag must match package.json version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} doesn't match package.json version ${version}" >&2
+            exit 1
+          fi
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run test:unit
+      - name: Install ICU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libicu-dev icu-devtools
+      - name: Conversion table reproducibility check
+        run: python3 tools/gen-tables/gen_tables.py --check
+
+  # Builds every platform's binary and runs tests/test_encodings.py against
+  # the ones the runner can execute.
+  build-transcoder:
+    uses: ./.github/workflows/build-transcoder.yml
+
+  package:
+    name: Package VSIX (${{ matrix.target }})
+    needs: [verify, build-transcoder]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # for attest-build-provenance
+      attestations: write
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+            artifact: transcoder-linux-x64
+          - target: linux-arm64
+            artifact: transcoder-linux-arm64
+          - target: linux-armhf
+            artifact: transcoder-linux-armhf
+          - target: alpine-x64
+            artifact: transcoder-linux-x64 # musl static, so just reuse the Linux build
+          - target: alpine-arm64
+            artifact: transcoder-linux-arm64
+          - target: darwin-x64
+            artifact: transcoder-darwin-x64
+          - target: darwin-arm64
+            artifact: transcoder-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: ${{ matrix.artifact }}
+          path: transcoder/bin
+      - name: Make the binary executable
+        run: chmod +x transcoder/bin/luit
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1.4.4
+        with:
+          subject-path: transcoder/bin/luit
+      - run: npm ci --ignore-scripts
+      # enabledApiProposals is only there so the integration tests can use
+      # onDidWriteTerminalData (src/test/runTest.ts); product code doesn't use
+      # it, and the Marketplace rejects extensions that declare it.
+      - name: Drop the test-only proposed API declaration
+        run: npm pkg delete enabledApiProposals
+      - name: Create VSIX package
+        run: npx vsce package --target ${{ matrix.target }} -o "dist/${{ matrix.target }}.vsix"
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: vsix-${{ matrix.target }}
+          path: dist/*.vsix
+
+  publish:
+    name: Publish to the Marketplace and Open VSX
+    needs: package
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # for azure/login (OIDC)
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          pattern: vsix-*
+          path: dist
+          merge-multiple: true
+      - name: Sign in to Microsoft Entra ID (OIDC)
+        uses: azure/login@v2.3.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Publish to the Marketplace
+        run: npx vsce publish --azure-credential --packagePath dist/*.vsix
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          for vsix in dist/*.vsix; do
+            npx ovsx publish "$vsix"
+          done

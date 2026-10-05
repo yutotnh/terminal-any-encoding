@@ -1,0 +1,21 @@
+# transcoder/ (the luit fork, C) is out of scope here; C dependencies can't be
+# covered by this. Tracking luit's upstream is handled separately by
+# .github/workflows/upstream-watch.yml.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Dependabot doesn't update .github/workflows/actions.lock, so its PRs
+  # fail at startup until the lock is regenerated (see AGENTS.md). One
+  # grouped PR keeps that to a single fix-up.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

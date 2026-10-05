@@ -1,0 +1,19 @@
+{
+  "extension.title": "Terminal Any Encoding",
+  "extension.description": "Use non-UTF-8 character encodings (EUC-JP, Shift JIS, GBK, Big5-HKSCS, EUC-KR, and the rest of the 45 non-Unicode encodings VS Code natively supports) in the VS Code integrated terminal.",
+  "extension.category": "Terminal Any Encoding",
+  "command.openTerminal.title": "Open Terminal with Encoding...",
+  "command.openDefaultEncodingTerminal.title": "Open Terminal (Default Encoding)",
+  "config.defaultEncoding.description": "Encoding used by \"Open Terminal (Default Encoding)\" and the \"🌐 Default Encoding\" terminal profile. Leave empty to choose one each time.",
+  "config.defaultEncoding.picker": "Choose each time",
+  "config.warnAboutLocale.description": "Warn when a terminal can't use a locale matching its encoding: the host has none installed, or an LC_* variable in the environment names a different encoding. Programs in such a terminal may print garbled text.",
+  "config.shellProfile.linux.description": "The terminal profile (a name from `#terminal.integrated.profiles.linux#`) whose shell runs inside this extension's terminals on Linux. Leave empty to use `#terminal.integrated.defaultProfile.linux#`; if that's one of this extension's profiles, `$SHELL` is used.",
+  "config.shellProfile.osx.description": "The terminal profile (a name from `#terminal.integrated.profiles.osx#`) whose shell runs inside this extension's terminals on macOS. Leave empty to use `#terminal.integrated.defaultProfile.osx#`; if that's one of this extension's profiles, `$SHELL` is used.",
+  "capabilities.untrustedWorkspaces.description": "In Restricted Mode, the terminal profile set by a workspace (shellProfile) is ignored, as VS Code ignores a workspace's terminal profiles.",
+  "taskDefinition.encoding.description": "Encoding the task's shell runs in, as in \"Open Terminal with Encoding...\".",
+  "taskDefinition.command.description": "The command to run, as in a \"shell\" task. Without `args`, it's a whole command line.",
+  "taskDefinition.args.description": "Arguments passed to the command, quoted for the shell.",
+  "taskDefinition.options.description": "Additional options for the task.",
+  "taskDefinition.options.cwd.description": "The working directory. Defaults to the workspace folder.",
+  "taskDefinition.options.env.description": "Environment variables added for the task."
+}
