@@ -90,12 +90,6 @@ static FontencCharsetRec fontencCharsets[] =
     {"KSC 5601",       T_9494,  'C', "ksc5601.1987-0",   0x0000, NULL, NULL},
     {"JIS X 0212",     T_9494,  'D', "jisx0212.1990-0",  0x0000, NULL, NULL},
 
-    /* PATCH(fork, euc-jp-2007): EUC-JP's G1 plane as VS Code reads it. A superset of
-     * stock "JIS X 0208" above (NEC row 13 + IBM extension rows added), so it
-     * gets a distinct xlfd name rather than overwriting the stock table -
-     * existing eucJP/SJIS behaviour is unaffected. See builtin_ja.c. */
-    {"JIS X 0208 (2007)", T_9494, 'Q', "jisx0208-2007-0", 0x0000, NULL, NULL},
-
     {"GB 2312",        T_9696,  'A', "gb2312.1980-0",    0x0000, NULL, NULL},
     {"JIS X 0208",     T_9696,  'B', "jisx0208.1990-0",  0x0000, NULL, NULL},
     {"KSC 5601",       T_9696,  'C', "ksc5601.1987-0",   0x0000, NULL, NULL},
@@ -177,6 +171,9 @@ static const OtherCharsetRec otherCharsets[] =
     {"GB18030",    init_gb18030x, mapping_gb18030x, reverse_gb18030x, stack_gb18030},
     /* PATCH(fork, cp932): see other_ja.c */
     {"CP932",      init_cp932,   mapping_cp932,   reverse_cp932,   stack_cp932},
+    /* PATCH(fork, big5) and PATCH(fork, eucjp): see other_ja.c */
+    {"BIG5X",      init_big5x,   mapping_big5x,   reverse_big5x,   stack_hkscs},
+    {"EUC-JP-2007", init_eucjpx, mapping_eucjpx,  reverse_eucjpx,  stack_eucjp},
     {NULL,         NULL,         NULL,            NULL,            NULL}
 };
 /* *INDENT-ON* */
@@ -688,11 +685,12 @@ static const LocaleCharsetRec localeCharsets[] =
     {"GB2312",     0, 1, NULL,    NULL,         NULL,            NULL,         "GB2312"},
     {"eucJP",      0, 1, "ASCII", "JIS X 0208", "JIS X 0201:GR", "JIS X 0212", NULL},
     /* PATCH(fork, euc-jp-2007): see docs/transcoder-design.md */
-    {"euc-jp-2007", 0, 1, "ASCII", "JIS X 0208 (2007)", "JIS X 0201:GR", "JIS X 0212", NULL},
+    {"euc-jp-2007", 0, 1, NULL,    NULL,         NULL,            NULL,         "EUC-JP-2007"},
     {"eucKR",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP949"},
     {"eucCN",      0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
     {"eucTW",      0, 1, "ASCII", "CNS11643-1", "CNS11643-2",    "CNS11643-3", NULL},
-    {"Big5",       0, 1, "ASCII", "Big 5",      NULL,            NULL,         NULL},
+    /* PATCH(fork, big5): see other_ja.c */
+    {"Big5",       0, 1, NULL,    NULL,         NULL,            NULL,         "BIG5X"},
 
     {"gbk",        0, 1, NULL,    NULL,         NULL,            NULL,         "GBK"},
     {"UTF-8",      0, 1, NULL,    NULL,         NULL,            NULL,         "UTF-8"},

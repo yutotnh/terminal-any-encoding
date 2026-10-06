@@ -6,6 +6,9 @@ For each supported encoding (src/encodings.ts):
 - Output: every byte sequence the editor decodes to one character (all
   single bytes, all 2-byte pairs, EUC-JP's 3-byte G3 sequences and
   GB18030's 4-byte ones) is decoded by luit and compared with the editor.
+- Invalid output: every byte sequence of those shapes, and every one cut
+  short or with a wrong byte, that the editor shows with U+FFFD (it shows
+  U+FFFD for the first byte and goes on from the second).
 - Input: every character the editor can encode is typed into luit through a
   real PTY, and the bytes the shell receives are compared with what the
   editor would save.
@@ -122,6 +125,56 @@ def expected_decodings(enc_id: str) -> dict[bytes, int]:
     for hexseq, cp in DECODE_EXCEPTIONS.get(enc_id, {}).items():
         result[bytes.fromhex(hexseq)] = cp
     return result
+
+
+def invalid_candidates(enc_id: str) -> list[bytes]:
+    """Byte sequences of up to 4 bytes, valid ones among them, that can go
+    wrong: a byte where a character can't start or go on, or one too few."""
+    high = range(0x80, 0x100)
+    any_byte = [b for b in range(0x20, 0x100) if b != 0x7F]
+    seqs = [bytes([l]) for l in high]
+    seqs += [bytes([l, t]) for l in high for t in any_byte]
+    if enc_id == "eucjp":
+        seqs += [bytes([0x8F, a, b]) for a in range(0xA1, 0xFF) for b in any_byte]
+    if enc_id == "gb18030":
+        seqs += [bytes([l, d, x]) for l in range(0x81, 0xFF) for d in range(0x30, 0x3A) for x in any_byte]
+        seqs += [bytes([l, d, x, y]) for l in (0x81, 0x90, 0xFE) for d in (0x30, 0x39)
+                 for x in range(0x81, 0xFF) for y in any_byte if not 0x30 <= y <= 0x39]
+    return seqs
+
+
+def expected_invalid(enc_id: str) -> dict[bytes, str]:
+    """What the editor shows for each sequence it shows U+FFFD for (followed
+    by a newline, so a sequence cut short ends)."""
+    seqs = invalid_candidates(enc_id)
+    decoded = oracle("decode", enc_id, [(s + b"\n").hex() for s in seqs])
+    result: dict[bytes, str] = {}
+    for seq, cps in zip(seqs, decoded):
+        cps_int = [int(c, 16) for c in cps.split()]
+        if 0xFFFD not in cps_int:
+            continue
+        # C1 controls are control characters in a terminal (see above)
+        if any(c != 0x0A and (c < 0x20 or 0x7F <= c <= 0x9F) for c in cps_int):
+            continue
+        if enc_id == "gb18030" and len(seq) == 4 and gb18030_unassigned(seq):
+            continue
+        result[seq] = "".join(map(chr, cps_int))
+    return result
+
+
+def check_invalid(enc: str, expected: dict[bytes, str]) -> list[str]:
+    if not expected:
+        return []
+    data = b"".join(s + b"\n" for s in expected)
+    p = subprocess.run([str(LUIT), "-c", "-encoding", enc], input=data, capture_output=True)
+    if p.stdout.decode("utf-8", errors="replace") == "".join(expected.values()):
+        return []
+    problems = []
+    for seq, want in expected.items():
+        got = luit_decode_one(enc, seq + b"\n")
+        if got != want:
+            problems.append(f"{seq.hex()} -> {fmt(got)}, editor {fmt(want)}")
+    return problems
 
 
 def luit_decode(enc: str, seqs: list[bytes]) -> list[str]:
@@ -247,10 +300,13 @@ def check_one(luit: str, e: dict) -> tuple[str, bool]:
     LUIT = Path(luit)
     decodings = expected_decodings(e["id"])
     problems = check_decoding(e["id"], e["luitEncoding"], decodings)
+    invalid = expected_invalid(e["id"])
+    problems += check_invalid(e["luitEncoding"], invalid)
     encodings = expected_encodings(e["id"], decodings)
     problems += check_encoding(e["luitEncoding"], encodings)
     lines = [("OK " if not problems else "NG ")
-             + f"{e['id']:12s} {len(decodings):7d} sequences, {len(encodings):7d} characters"
+             + f"{e['id']:12s} {len(decodings):7d} sequences, {len(invalid):7d} invalid,"
+             + f" {len(encodings):7d} characters"
              + (f": {len(problems)} differ" if problems else "")]
     lines += [f"      {p}" for p in problems[:10]]
     if len(problems) > 10:

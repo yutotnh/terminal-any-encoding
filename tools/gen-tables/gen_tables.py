@@ -51,11 +51,11 @@ def plane_sequences(plane: str) -> list[tuple[int, bytes]]:
       0x80, and ISO 8859's T_96, whose upstream tables are keyed the same
       way; luit's "ASCII" is iso8859-1's GL half, which upstream left to an
       identity fallback)
-    - raw2byte: the raw byte or 2-byte value (OTHER charsets such as CP932
-      and GBK, and Big5's T_94192)
-    - g1: an EUC 2-byte GR sequence, as GL (the high bit of both bytes stripped)
-    - g3: EUC-JP's SS3 (0x8F) + 2 bytes, as GL
-    - kana: EUC-JP's SS2 (0x8E) + 1 byte, as the GR byte (JIS X 0201:GR)"""
+    - raw2byte: the raw byte or 2-byte value (OTHER charsets such as CP932,
+      GBK and Big5)
+    - g1: an EUC 2-byte sequence, as GL (the high bit of both bytes stripped)
+    - g3: EUC-JP's 0x8F (SS3) + 2 bytes, as GL
+    - kana: EUC-JP's 0x8E (SS2) + 1 byte, as that byte"""
     gr = range(0xA1, 0xFF)
     if plane == "raw1byte":
         return [(b, bytes([b])) for b in range(0x100)]

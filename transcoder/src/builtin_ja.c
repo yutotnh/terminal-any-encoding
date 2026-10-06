@@ -89486,7 +89486,7 @@ static const BuiltInMapping tbl_big5hkscs_0[] =
 };
 
 /* big5.eten-0: iconv-lite cp950 plane=raw2byte entries=13503
- * Big5 as VS Code reads it (CP950), for the "Big 5" charset (T_94192, keyed on the raw 2 bytes). */
+ * Big5 as VS Code reads it (CP950), keyed on the raw 2 bytes. */
 static const BuiltInMapping tbl_big5_eten_0[] =
 {
     {0xA140, 0x3000},

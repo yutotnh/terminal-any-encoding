@@ -90,6 +90,20 @@ typedef struct {
     int buf;
 } aux_cp932;
 
+/* PATCH(fork, eucjp): EUC-JP from the three tables VS Code reads it with
+ * (JIS X 0208 with its extensions, JIS X 0201 katakana after SS2, JIS X
+ * 0212 after SS3), as an "other" charset; see other_ja.c. */
+typedef struct {
+    FontMapPtr x0208mapping;
+    FontMapPtr x0201mapping;
+    FontMapPtr x0212mapping;
+    FontMapReversePtr x0208reverse;
+    FontMapReversePtr x0201reverse;
+    FontMapReversePtr x0212reverse;
+    int buf[2];
+    int buf_ptr;
+} aux_eucjp;
+
 typedef union {
     aux_gbk gbk;
     aux_utf8 utf8;
@@ -97,7 +111,14 @@ typedef union {
     aux_hkscs hkscs;
     aux_gb18030 gb18030;
     aux_cp932 cp932;
+    aux_eucjp eucjp;
 } OtherState, *OtherStatePtr;
+
+/* PATCH(fork, invalid sequences): what a stack function returns when the
+ * bytes so far can't be a character. copyOut() (iso2022.c) then shows
+ * U+FFFD for the first byte and reads the rest again, as VS Code's editor
+ * does. -1 still means "more bytes needed". */
+#define OTHER_INVALID (-2)
 
 int init_gbk(OtherStatePtr);
 UINT mapping_gbk(UINT, OtherStatePtr);
@@ -154,6 +175,16 @@ UINT reverse_cp949(UINT, OtherStatePtr);
 int init_hkscsx(OtherStatePtr);
 UINT mapping_hkscsx(UINT, OtherStatePtr);
 UINT reverse_hkscsx(UINT, OtherStatePtr);
+/* PATCH(fork, big5): Big5 (CP950) the same way, with stack_hkscs */
+int init_big5x(OtherStatePtr);
+UINT mapping_big5x(UINT, OtherStatePtr);
+UINT reverse_big5x(UINT, OtherStatePtr);
+
+/* PATCH(fork, eucjp): see aux_eucjp */
+int init_eucjpx(OtherStatePtr);
+UINT mapping_eucjpx(UINT, OtherStatePtr);
+UINT reverse_eucjpx(UINT, OtherStatePtr);
+int stack_eucjp(UINT, OtherStatePtr);
 
 int init_gb18030(OtherStatePtr);
 UINT mapping_gb18030(UINT, OtherStatePtr);

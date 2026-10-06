@@ -239,6 +239,7 @@ allocIso2022(void)
     is->buffered_count = 0;
 
     is->buffered_ku = -1;
+    is->other_pending_count = 0;
 
     is->outbuf = malloc((size_t) BUFFER_SIZE);
     if (!is->outbuf) {
@@ -922,6 +923,51 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 
 #define PAIR(a,b) ((unsigned) ((a) << 8) | (b))
 
+/*
+ * PATCH(fork, invalid sequences): decodes one byte with OTHER's stack
+ * function. Like VS Code's editor (iconv-lite), bytes that can't make a
+ * character show U+FFFD for their first byte, and decoding goes on from the
+ * second; upstream dropped them silently. Returns 0 if the byte has to be
+ * read again (after the bytes before it).
+ */
+static int
+otherByte(Iso2022Ptr is, int fd, unsigned char b)
+{
+    const CharsetRec *other = OTHER(is);
+    int c = other->other_stack(b, other->other_aux);
+    unsigned count = is->other_pending_count + 1;
+    unsigned char rest[sizeof(is->other_pending)];
+    unsigned i;
+
+    if (c == -1) {
+	if (is->other_pending_count < sizeof(is->other_pending))
+	    is->other_pending[is->other_pending_count++] = b;
+	return 1;
+    }
+    if (c != OTHER_INVALID) {
+	unsigned ucode = other->other_recode((unsigned) c, other->other_aux);
+	/* An unmapped 4-byte GB18030 sequence stays one U+FFFD, as in the
+	 * WHATWG Encoding Standard: every one of them is well-formed. */
+	if (ucode != 0xFFFD || count == 1 || count == 4) {
+	    outbufUTF8(is, fd, ucode);
+	    is->other_pending_count = 0;
+	    return 1;
+	}
+    }
+    outbufUTF8(is, fd, 0xFFFD);
+    if (count == 1)
+	return 1;
+    count -= 2;
+    memcpy(rest, is->other_pending + 1, count);
+    is->other_pending_count = 0;
+    for (i = 0; i < count; i++) {
+	while (!otherByte(is, fd, rest[i])) {
+	    /* read rest[i] again */
+	}
+    }
+    return 0;
+}
+
 void
 copyOut(Iso2022Ptr is, int fd, unsigned char *buf, unsigned count)
 {
@@ -935,21 +981,16 @@ copyOut(Iso2022Ptr is, int fd, unsigned char *buf, unsigned count)
 	case P_NORMAL:
 	  resynch:
 	    if (is->buffered_ku < 0) {
-		if (*s == ESC) {
+		if (*s == ESC && is->other_pending_count == 0) {
 		    buffer(is, *s++);
 		    is->parserState = P_ESC;
 		} else if (OTHER(is) != NULL
 			   && OTHER(is)->other_recode != NULL
 			   && OTHER(is)->other_stack != NULL
 			   && OTHER(is)->other_aux != NULL) {
-		    int c = OTHER(is)->other_stack(*s, OTHER(is)->other_aux);
-		    if (c >= 0) {
-			unsigned ucode = (unsigned) c;
-			outbufUTF8(is, fd,
-				   OTHER(is)->other_recode(ucode, OTHER(is)->other_aux));
-			is->shiftState = S_NORMAL;
-		    }
-		    s++;
+		    if (otherByte(is, fd, *s))
+			s++;
+		    is->shiftState = S_NORMAL;
 		} else if (*s == CSI && CHARSET_REGULAR(GR(is))) {
 		    buffer(is, *s++);
 		    is->parserState = P_CSI;

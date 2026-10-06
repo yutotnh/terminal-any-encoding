@@ -134,12 +134,8 @@ stack_cp932(unsigned c, OtherStatePtr s)
 	}
 	return (int) c;
     } else {
-	int b;
-	if (c < 0x40 || c == 0x7F) {
-	    s->cp932.buf = -1;
-	    return (int) c;
-	}
-	b = (int) ((unsigned) (s->cp932.buf << 8) + c);
+	/* PATCH(fork, invalid sequences): as in stack_gbk() (other.c). */
+	int b = (int) ((unsigned) (s->cp932.buf << 8) + c);
 	s->cp932.buf = -1;
 	return b;
     }
@@ -434,4 +430,122 @@ unsigned int
 reverse_hkscsx(unsigned int n, OtherStatePtr s)
 {
     return reverse_direct(n, s->hkscs.reverse, "Big5-HKSCS");
+}
+
+/*
+ * Big5 as VS Code reads it (CP950), keyed on the raw bytes like Big5-HKSCS.
+ * It was a T_94192 charset in GR, where luit took the C1 bytes 0x8E, 0x8F
+ * and 0x9B, which are Big5 lead bytes, for SS2, SS3 and CSI.
+ */
+int
+init_big5x(OtherStatePtr s)
+{
+    s->hkscs.buf = -1;
+    return init_direct(&s->hkscs.mapping, &s->hkscs.reverse, "big5.eten-0");
+}
+
+unsigned int
+mapping_big5x(unsigned int n, OtherStatePtr s)
+{
+    return mapping_direct(n, s->hkscs.mapping, "Big5");
+}
+
+unsigned int
+reverse_big5x(unsigned int n, OtherStatePtr s)
+{
+    return reverse_direct(n, s->hkscs.reverse, "Big5");
+}
+
+/*
+ * EUC-JP as VS Code reads it. Codes are the raw bytes: 0xA1A1-0xFEFE (JIS
+ * X 0208, the table keyed on GL), 0x8EA1-0x8EDF (JIS X 0201 katakana) and
+ * 0x8FA1A1-0x8FFEFE (JIS X 0212, keyed on GL). It was an ISO 2022 setup
+ * (G1 in GR, G2/G3 by single shifts), whose decoder dropped or passed
+ * through invalid bytes and took 0x9B for CSI; VS Code's editor shows them
+ * as U+FFFD. Which table a character is sent from is decided when the
+ * tables are generated (only one row encodes a character).
+ */
+#define EUC_GL(n) ((n) & 0x7F7F)
+
+int
+init_eucjpx(OtherStatePtr s)
+{
+    s->eucjp.buf_ptr = 0;
+    return (init_direct(&s->eucjp.x0208mapping, &s->eucjp.x0208reverse, "jisx0208-2007-0")
+	    && init_direct(&s->eucjp.x0201mapping, &s->eucjp.x0201reverse, "jisx0201.1976-0")
+	    && init_direct(&s->eucjp.x0212mapping, &s->eucjp.x0212reverse, "jisx0212.1990-0"));
+}
+
+static int
+euc_byte(unsigned n)
+{
+    return n >= 0xA1 && n <= 0xFE;
+}
+
+unsigned int
+mapping_eucjpx(unsigned int n, OtherStatePtr s)
+{
+    unsigned found_value;
+    unsigned hi = (n >> 8) & 0xFF, lo = n & 0xFF;
+
+    if (n < 0x80)
+	return n;
+    if (n >> 16) {
+	if ((n >> 16) == 0x8F && euc_byte(hi) && euc_byte(lo)
+	    && luitMapCodeValueFound(EUC_GL(n), s->eucjp.x0212mapping, &found_value))
+	    return found_value;
+    } else if (hi == 0x8E) {
+	if (luitMapCodeValueFound(lo, s->eucjp.x0201mapping, &found_value))
+	    return found_value;
+    } else if (euc_byte(hi) && euc_byte(lo)) {
+	if (luitMapCodeValueFound(EUC_GL(n), s->eucjp.x0208mapping, &found_value))
+	    return found_value;
+    }
+    return apply_decode_fallback(n, "EUC-JP");
+}
+
+unsigned int
+reverse_eucjpx(unsigned int n, OtherStatePtr s)
+{
+    unsigned found_value;
+
+    if (n < 0x80)
+	return n;
+    if (luitReverseFound(n, s->eucjp.x0208reverse, &found_value))
+	return found_value | 0x8080;
+    if (luitReverseFound(n, s->eucjp.x0201reverse, &found_value))
+	return 0x8E00 | found_value;
+    if (luitReverseFound(n, s->eucjp.x0212reverse, &found_value))
+	return 0x8F8080 | found_value;
+    /* same reason as reverse_cp932 */
+    return apply_encode_fallback(n, "EUC-JP");
+}
+
+int
+stack_eucjp(unsigned c, OtherStatePtr s)
+{
+    aux_eucjp *e = &s->eucjp;
+
+    if (e->buf_ptr == 0) {
+	if (c < 0x80)
+	    return (int) c;
+	e->buf[e->buf_ptr++] = (int) c;
+	return -1;
+    }
+    if (e->buf_ptr == 1 && e->buf[0] == 0x8F) {
+	if (!euc_byte(c)) {
+	    e->buf_ptr = 0;
+	    return OTHER_INVALID;
+	}
+	e->buf[e->buf_ptr++] = (int) c;
+	return -1;
+    }
+    /* any other byte makes a code, unmapped if invalid (see stack_gbk) */
+    {
+	unsigned code = (unsigned) e->buf[0];
+	if (e->buf_ptr == 2)
+	    code = (code << 8) | (unsigned) e->buf[1];
+	e->buf_ptr = 0;
+	return (int) ((code << 8) | c);
+    }
 }

@@ -73,15 +73,11 @@ stack_gbk(unsigned c, OtherStatePtr s)
 	s->gbk.buf = (int) c;
 	return -1;
     } else {
-	int b;
-	if (c < 0x40 || c == 0x7F) {
-	    s->gbk.buf = -1;
-	    return (int) c;
-	}
-	if (s->gbk.buf < 0xFF && c < 0xFF)
-	    b = (int) ((unsigned) (s->gbk.buf << 8) + c);
-	else
-	    b = -1;
+	/* PATCH(fork, invalid sequences): any second byte makes a code. An
+	 * invalid one is an unmapped code, which copyOut() (iso2022.c) shows
+	 * as U+FFFD before reading the second byte again, like VS Code's
+	 * editor; upstream dropped the lead byte, or both bytes. */
+	int b = (int) ((unsigned) (s->gbk.buf << 8) + c);
 	s->gbk.buf = -1;
 	return b;
     }
@@ -319,15 +315,11 @@ stack_hkscs(unsigned c, OtherStatePtr s)
 	s->hkscs.buf = (int) c;
 	return -1;
     } else {
-	int b;
-	if (c < 0x40 || c == 0x7F) {
-	    s->hkscs.buf = -1;
-	    return (int) c;
-	}
-	if (s->hkscs.buf < 0xFF && c < 0xFF)
-	    b = (int) ((unsigned) (s->hkscs.buf << 8) + c);
-	else
-	    b = -1;
+	/* PATCH(fork, invalid sequences): any second byte makes a code. An
+	 * invalid one is an unmapped code, which copyOut() (iso2022.c) shows
+	 * as U+FFFD before reading the second byte again, like VS Code's
+	 * editor; upstream dropped the lead byte, or both bytes. */
+	int b = (int) ((unsigned) (s->hkscs.buf << 8) + c);
 	s->hkscs.buf = -1;
 	return b;
     }
@@ -434,8 +426,8 @@ stack_gb18030(unsigned c, OtherStatePtr s)
 	    s->gb18030.linear = 0;
 	    return (int) c;
 	}
-	if (c == 0xFF)
-	    return -1;
+	if (c == 0xFF)		/* PATCH(fork, invalid sequences): was dropped */
+	    return OTHER_INVALID;
 	s->gb18030.linear = 0;
 	s->gb18030.buf[s->gb18030.buf_ptr++] = (int) c;
 	return -1;
@@ -444,26 +436,21 @@ stack_gb18030(unsigned c, OtherStatePtr s)
 	 * 0x40-0x7E or 0x80-0xFE; upstream rejected 0x80 (dropping e.g. 亐,
 	 * 0x8180) and took 0x7F. And the second byte of a 4-byte sequence is
 	 * 0x30-0x39; upstream compared with decimal 30. */
-	if (c >= 0x40) {
-	    s->gb18030.buf_ptr = 0;
-	    if ((c == 0x7F) || (c == 0xFF))
-		return -1;
-	    else
-		return (int) ((unsigned) (s->gb18030.buf[0] << 8) + c);
-	} else if (c >= 0x30 && c <= 0x39) {	/* 2Byte is (0x30 -> 0x39) */
+	if (c >= 0x30 && c <= 0x39) {	/* 2Byte is (0x30 -> 0x39) */
 	    s->gb18030.buf[s->gb18030.buf_ptr++] = (int) c;
 	    return -1;
-	} else {
-	    s->gb18030.buf_ptr = 0;
-	    return (int) c;
 	}
+	/* PATCH(fork, invalid sequences): as in stack_gbk(), any other
+	 * second byte makes a 2-byte code, unmapped if invalid. */
+	s->gb18030.buf_ptr = 0;
+	return (int) ((unsigned) (s->gb18030.buf[0] << 8) + c);
     } else if (s->gb18030.buf_ptr == 2) {
 	if ((c >= 0x81) && (c <= 0xFE)) {
 	    s->gb18030.buf[s->gb18030.buf_ptr++] = (int) c;
 	    return -1;
 	} else {
 	    s->gb18030.buf_ptr = 0;
-	    return (int) c;
+	    return OTHER_INVALID;
 	}
     } else {
 	int r = 0;
@@ -476,6 +463,6 @@ stack_gb18030(unsigned c, OtherStatePtr s)
 		+ ((int) c - 0x30);
 	    return r;
 	}
-	return -1;
+	return OTHER_INVALID;
     }
 }

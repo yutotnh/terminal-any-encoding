@@ -72,7 +72,7 @@
       "name": "big5.eten-0",
       "encoding": "cp950",
       "plane": "raw2byte",
-      "comment": "Big5 as VS Code reads it (CP950), for the \"Big 5\" charset (T_94192, keyed on the raw 2 bytes)."
+      "comment": "Big5 as VS Code reads it (CP950), keyed on the raw 2 bytes."
     },
     {
       "name": "cp949-0",

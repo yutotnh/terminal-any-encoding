@@ -57,27 +57,27 @@ INPUT_ROUNDTRIP_CASES = [
 INPUT_DROP_CASES: list[tuple[str, str, str]] = []
 
 # Fallback policy when conversion isn't possible.
-# Output direction: undecodable bytes become U+FFFD.
-# (encoding, input byte sequence (hex), fallback mode (always None now), expected code point)
+# Output direction: bytes that can't make a character show U+FFFD for their
+# first byte, and decoding goes on from the second, as in VS Code's editor
+# (tests/test_editor_parity.py checks every such sequence).
+# (encoding, input byte sequence (hex), fallback mode (always None now), expected text)
 FALLBACK_OUTPUT_CASES = [
-    ("euc-jp-2007", "a2af", None, 0xFFFD, "unassigned GL code (default=replace)"),
-    ("CP932", "81ad", None, 0xFFFD, "unassigned SJIS byte (default=replace)"),
-    # GBK / Big5-HKSCS / CP865 use the same fallback as the others. With
-    # upstream's identity fallback, an unmapped code silently mis-converted
-    # into an unrelated character (confirmed by measurement: Big5-HKSCS
-    # a180 -> U+A180).
-    # There's no GBK case: GBK has no unmapped pairs within the
-    # second-byte range stack_gbk accepts (0x40-0xFE, excluding 0x7F; a
-    # second byte of 0xFF is rejected by stack_gbk itself, so it never
-    # reaches fallback_policy). fallback_policy itself is verified via the
-    # euc-jp-2007/CP932/Big5-HKSCS cases.
-    ("BIG5-HKSCS", "a180", None, 0xFFFD, "Big5-HKSCS unmapped (default=replace); upstream mis-converts it to U+A180"),
+    ("euc-jp-2007", "a2af41", None, "\ufffd\ufffdA", "unassigned JIS X 0208 code: the second byte is read again, as a lead"),
+    ("euc-jp-2007", "8fa141", None, "\ufffd\ufffdA", "JIS X 0212 sequence cut short by ASCII"),
+    ("euc-jp-2007", "9b41", None, "\ufffdA", "0x9B is no CSI in EUC-JP"),
+    ("CP932", "81ad", None, "\ufffd\uff6d", "unassigned pair: the second byte is read again (katakana)"),
+    ("CP932", "8121", None, "\ufffd!", "a lead byte before ASCII isn't dropped"),
+    # With upstream's identity fallback, an unmapped code silently
+    # mis-converted into an unrelated character (Big5-HKSCS a180 -> U+A180).
+    ("BIG5-HKSCS", "a180", None, "\ufffd\ufffd", "Big5-HKSCS unmapped; upstream mis-converts it to U+A180"),
+    ("Big5", "8e40", None, "\ufffd@", "0x8E is a Big5 lead byte, not SS2"),
+    ("GB18030", "81308141", None, "\ufffd0\u4e04", "GB18030 4-byte sequence broken at its last byte"),
     # gb18030_linear_to_codepoint upper-bound check regression: FE 39 FE 39
     # is byte-range-valid but its linear index (1587599) exceeds the
     # maximum (1237575, corresponding to U+10FFFF). Without the upper-bound
     # check, this would produce an invalid code point past U+10FFFF and get
     # output as invalid UTF-8.
-    ("GB18030", "fe39fe39", None, 0xFFFD, "GB18030 linear index exceeds upper bound (default=replace)"),
+    ("GB18030", "fe39fe39", None, "\ufffd", "GB18030 linear index exceeds upper bound"),
 ]
 
 # Input direction: (encoding, input character, fallback mode, expected round-trip result)
@@ -316,12 +316,12 @@ def run_drop_case(enc: str, text: str, reason: str) -> tuple[bool, str]:
     return False, f"expected it to vanish but received: {out!r}"
 
 
-def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect_cp: int | None) -> tuple[bool, str]:
+def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect: str | None) -> tuple[bool, str]:
     args = [str(LUIT), "-c"]
     args += ["-encoding", enc]
     data = bytes.fromhex(hexin)
     p = subprocess.run(args, input=data, capture_output=True)
-    if expect_cp is None:
+    if expect is None:
         if p.stdout == b"":
             return True, "0 bytes (as expected)"
         return False, f"expected 0 bytes but received: {p.stdout!r}"
@@ -329,9 +329,9 @@ def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect_cp: 
         text = p.stdout.decode("utf-8")
     except UnicodeDecodeError:
         return False, f"invalid UTF-8: {p.stdout!r}"
-    if len(text) != 1 or ord(text) != expect_cp:
-        return False, f"expected U+{expect_cp:04X} but got: {p.stdout!r}"
-    return True, f"U+{ord(text):04X}"
+    if text != expect:
+        return False, f"expected {expect!r} but got {text!r}"
+    return True, repr(text)
 
 
 def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None, expect: str) -> tuple[bool, str]:
@@ -901,9 +901,9 @@ def main() -> int:
             failures += 1
 
     print("\n== Fallback: output direction ==")
-    for enc, hexin, mode, expect_cp, desc in FALLBACK_OUTPUT_CASES:
+    for enc, hexin, mode, expect, desc in FALLBACK_OUTPUT_CASES:
         total += 1
-        ok, detail = run_fallback_output_case(enc, hexin, mode, expect_cp)
+        ok, detail = run_fallback_output_case(enc, hexin, mode, expect)
         mark = "OK " if ok else "NG "
         print(f"{mark}[{enc} fallback={mode or 'default'}] {hexin} -> {detail}  # {desc}")
         if not ok:

@@ -79,6 +79,9 @@ typedef struct _Iso2022 {
     size_t buffered_len;
     size_t buffered_count;
     int buffered_ku;
+    /* PATCH(fork, invalid sequences): the bytes OTHER's stack function holds */
+    unsigned char other_pending[4];
+    unsigned other_pending_count;
     unsigned char *outbuf;
     size_t outbuf_count;
 } Iso2022Rec, *Iso2022Ptr;

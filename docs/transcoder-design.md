@@ -16,13 +16,12 @@ own patches and additional files (`builtin_ja.c`/`other_ja.c`, etc.).
 How a table's `source` values are represented depends on luit's internal
 charset type (`plane` in `converters.json`):
 
-| Charset type               | Example                                                  | `source` value representation                 |
-| -------------------------- | -------------------------------------------------------- | --------------------------------------------- |
-| T_9494 (shift=0)           | EUC-JP's G1 (JIS X 0208) and G3 (JIS X 0212)             | GL scheme (high bit stripped from both bytes) |
-| T_94 (shift=0x80)          | EUC-JP's G2 (JIS X 0201 katakana)                        | The GR byte                                   |
-| T_94192 (shift=0x8000)     | Big5                                                     | The raw 2-byte value                          |
-| OTHER charset              | CP932, GBK, GB 2312, CP949 (EUC-KR), Big5-HKSCS, GB18030 | The raw byte or 2-byte value                  |
-| T_128 / T_96 (single-byte) | CP852, Windows-1252, ISO 8859-x, KOI8-x                  | The byte, all 256 of them                     |
+| Charset type               | Example                                                        | `source` value representation                 |
+| -------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| OTHER charset, EUC-JP      | JIS X 0208 (`0xA1A1`-) and JIS X 0212 (after `0x8F`)           | GL scheme (high bit stripped from both bytes) |
+| OTHER charset, EUC-JP      | JIS X 0201 katakana (after `0x8E`)                             | The byte                                      |
+| OTHER charset              | CP932, GBK, GB 2312, CP949 (EUC-KR), Big5, Big5-HKSCS, GB18030 | The raw byte or 2-byte value                  |
+| T_128 / T_96 (single-byte) | CP852, Windows-1252, ISO 8859-x, KOI8-x                        | The byte, all 256 of them                     |
 
 The builtin table mechanism itself (`BuiltInMapping.source`/`.target` are
 `unsigned`) was originally designed to support multi-byte character sets, but
@@ -111,6 +110,19 @@ VS Code's editor shows undecodable bytes. There's no option to skip or
 escape it instead: silently dropped output helps nobody, and such a setting
 would be luit's vocabulary leaking into the UI.
 
+Where the bytes stop making a character is decided as in the editor
+(iconv-lite): the first byte shows `U+FFFD` and decoding goes on from the
+second, whatever byte broke the sequence and however long it was. EUC-JP
+`0x8F 0xA1 0x41` is `U+FFFD U+FFFD A`, GB18030 `0x81 0x30 0x81 0x41` is
+`U+FFFD 0 丄`. Every multi-byte encoding is an OTHER charset for this: its
+stack function only assembles bytes (any second byte makes a 2-byte code,
+unmapped if invalid) or returns `OTHER_INVALID`, and `copyOut()`'s
+`otherByte()` keeps the bytes it held, shows `U+FFFD` and reads the rest
+again. An unmapped 4-byte GB18030 sequence stays one `U+FFFD` (the
+WHATWG Encoding Standard's choice; iconv-lite shows unrelated characters
+there, see above). A lone lead byte waits for the next one: a pty never ends
+the output it's in the middle of.
+
 On input (encoding) there's no option: a chunk of keyboard input containing a
 character the encoding can't represent is rejected as a whole, and the user
 gets a bell. Substituting `?` or dropping just that character would change the
@@ -183,8 +195,8 @@ NEC-selected IBM / IBM extensions, e.g. U+FFE2 at `0x81CA`/`0xEEF9`/
 `0xFA54`; EUC-JP's IBM extension kanji in both JIS X 0208's rows 89-92 and
 JIS X 0212; Big5's duplicated box-drawing characters). Every row would land
 in `rev_index`, `bsearch()` over equal keys returns an unspecified one, and
-luit tries G1 before G3, so input could send a sequence the editor never
-writes.
+luit tries JIS X 0208 before JIS X 0212, so input could send a sequence the
+editor never writes.
 
 `gen_tables.py`'s `mark_decode_only()` therefore lets a row encode only if
 its bytes are what its character is sent as: iconv-lite's choice, unless
@@ -287,6 +299,15 @@ macOS.
   `0x81 0x80`) silently disappeared while 0x7F was let through, and it
   compared the second byte of a 4-byte sequence with decimal 30 instead of
   0x30-0x39.
+- Every multi-byte decoder dropped bytes that couldn't make a character: a
+  lead byte followed by ASCII (CP932 `0x81 0x21` showed `!`), both bytes when
+  the second was `0xFF`, and `stack_gb18030()` dropped `0xFF` and broken
+  4-byte sequences. EUC-JP and Big5 were ISO 2022 setups, where a broken
+  sequence lost its lead byte, an invalid byte after SS2 was shown as
+  Latin-1, and the C1 bytes `0x8E`/`0x8F`/`0x9B` were taken for SS2/SS3/CSI,
+  though in Big5 they're lead bytes (`0x8E 0x40` showed `@`, and `0x9B`
+  could swallow what followed as a control sequence). They're OTHER charsets
+  now (`EUC-JP-2007`, `BIG5X` in `other_ja.c`), with the rule above.
 - `gb18030_linear_to_codepoint()`: the supplementary-plane check
   (`linear >= 189000`) had no upper bound, so an invalid 4-byte sequence that
   was byte-range-valid but had a linear index past the maximum could produce
