@@ -70,6 +70,9 @@ jobs:
         run: bash transcoder/scripts/build.sh
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
+      - name: "TEMPORARY: pty throughput"
+        timeout-minutes: 10
+        run: python3 .github/ptybench.py
       - name: Compare every encoding with VS Code's editor
         timeout-minutes: 10
         run: python3 tests/test_editor_parity.py
