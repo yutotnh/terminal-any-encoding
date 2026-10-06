@@ -2,25 +2,10 @@ import * as assert from "node:assert";
 import * as vscode from "vscode";
 import type { TestExports } from "../../extension";
 import { findOnPath, useTestShell } from "./testShell";
+import { waitFor } from "./waitFor";
 import { ENCODINGS } from "../../encodings";
 
 const EXTENSION_ID = "yutotnh.terminal-any-encoding";
-
-function waitFor(
-  predicate: () => boolean,
-  timeoutMs: number,
-  intervalMs = 200,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = () => {
-      if (predicate()) return resolve();
-      if (Date.now() - start > timeoutMs) return reject(new Error("Timed out"));
-      setTimeout(tick, intervalMs);
-    };
-    tick();
-  });
-}
 
 /**
  * Confirms command decoration, cwd tracking, and "run recent command" work
@@ -63,10 +48,14 @@ suite(
         await new Promise((r) => setTimeout(r, 1500));
         terminal.sendText("echo shellintegtest", true);
 
-        // Seeing OSC 633;A (prompt start) is proof shell integration is active
+        // Seeing OSC 633;A (prompt start) is proof shell integration is
+        // active. The command's own marks (C, D) come after its echo, so
+        // wait for all of them; the asserts below say which one is missing.
         await waitFor(
           () =>
-            buffer.includes("\x1b]633;A") && buffer.includes("shellintegtest"),
+            ["A", "B", "C", "D"].every((mark) =>
+              buffer.includes(`\x1b]633;${mark}`),
+            ) && buffer.includes("shellintegtest"),
           20000,
         );
 
@@ -156,6 +145,10 @@ suite(
         await new Promise((r) => setTimeout(r, 1500));
         terminal.sendText("echo no-shell-integration", true);
         await waitFor(() => buffer.includes("no-shell-integration"), 10000);
+        assert.ok(
+          buffer.includes("no-shell-integration"),
+          JSON.stringify(buffer),
+        );
         await new Promise((r) => setTimeout(r, 500));
         assert.ok(!buffer.includes("\x1b]633;"), JSON.stringify(buffer));
       } finally {

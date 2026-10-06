@@ -2,30 +2,9 @@ import * as assert from "node:assert";
 import * as vscode from "vscode";
 import { ENCODINGS, EncodingDefinition } from "../../encodings";
 import type { TestExports } from "../../extension";
+import { waitFor } from "./waitFor";
 
 const EXTENSION_ID = "yutotnh.terminal-any-encoding";
-
-function waitFor(
-  predicate: () => boolean,
-  timeoutMs: number,
-  intervalMs = 200,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = () => {
-      if (predicate()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error("Timed out: condition was never satisfied"));
-        return;
-      }
-      setTimeout(tick, intervalMs);
-    };
-    tick();
-  });
-}
 
 /**
  * Opens 3 tabs simultaneously with different encodings (eucjp / shiftjis /
@@ -107,7 +86,7 @@ suite("open terminals with multiple encodings simultaneously", function () {
             (buffers.get(terminals[i]) ?? "").includes(t.expect),
           ),
         30000,
-      ).catch(() => undefined);
+      );
 
       for (let i = 0; i < targets.length; i++) {
         const data = buffers.get(terminals[i]) ?? "";
