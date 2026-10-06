@@ -30,12 +30,12 @@ LUIT = REPO_ROOT / "transcoder" / "src" / "luit"
 
 # (encoding, input byte sequence (hex), expected code point, description) -- output direction
 OUTPUT_CASES = [
-    ("euc-jp-2007", "fce2", 0x9AD9, "髙 (G1, ICU/WHATWG euc-jp-2007)"),
+    ("euc-jp-2007", "fce2", 0x9AD9, "髙 (G1)"),
     ("euc-jp-2007", "8fecbf", 0x9DD7, "鷗 (G3/SS3, JIS X 0212)"),
     ("euc-jp-2007", "ada1", 0x2460, "① (G1, NEC special character)"),
     ("euc-jp-2007", "a1c1", 0x301C, "wave dash position (override: U+301C)"),
     ("euc-jp-2007", "c6fccbdc", None, "日本 (basic JIS X0208; string comparison done separately)"),
-    ("CP932", "fbfc", 0x9AD9, "髙 (direct lookup, ibm-943_P15A-2003)"),
+    ("CP932", "fbfc", 0x9AD9, "髙 (direct lookup)"),
     ("CP932", "8740", 0x2460, "① (NEC special character)"),
     ("CP932", "8160", 0x301C, "wave dash position (override: U+301C)"),
     ("CP932", "b1", 0xFF71, "half-width katakana ｱ"),
@@ -87,7 +87,7 @@ FALLBACK_OUTPUT_CASES = [
     # upstream's identity fallback, an unmapped code silently mis-converted
     # into an unrelated character (confirmed by measurement: Big5-HKSCS
     # a180 -> U+A180).
-    # There's no GBK case: ibm-1386 has no unmapped pairs within the
+    # There's no GBK case: GBK has no unmapped pairs within the
     # second-byte range stack_gbk accepts (0x40-0xFE, excluding 0x7F; a
     # second byte of 0xFF is rejected by stack_gbk itself, so it never
     # reaches fallback_policy). fallback_policy itself is verified via the
@@ -136,7 +136,7 @@ MORE_OUTPUT_CASES = [
     ("GB2312", "b0a1", 0x554A, "GB2312 阿 (same as above. Needed to construct source via the GL scheme (high-bit stripped))"),
     ("BIG5-HKSCS", "a4a4", 0x4E2D, "Big5-HKSCS 中 (same as above)"),
     # gen_tables.py lead-byte range bug regression check: lead bytes
-    # 0xFD/0xFE also have real mappings in ICU (GBK/GB18030 2-byte part/Big5-HKSCS).
+    # 0xFD/0xFE also have real mappings (GBK/GB18030 2-byte part/Big5-HKSCS).
     ("GBK", "fe40", 0xFA0C, "GBK 0xFE lead byte 兀 (gen_tables.py lead-byte range bug regression)"),
     ("GB18030", "fe40", 0xFA0C, "GB18030 2-byte part 0xFE lead byte 兀 (same as above)"),
     ("BIG5-HKSCS", "fe40", 0x9442, "Big5-HKSCS 0xFE lead byte 鑂 (same as above)"),
@@ -148,7 +148,7 @@ MORE_OUTPUT_CASES = [
     ("CP857", "a1", 0x00ED, "CP857 í (table added by the fork)"),
     ("CP1125", "a1", 0x0431, "CP1125 б (table added by the fork)"),
     ("MACROMAN", "a1", 0x00B0, "MACROMAN ° (table added by the fork)"),
-    ("KOI8-T", "80", 0x049B, "KOI8-T қ (table from iconv-lite; ICU has no converter)"),
+    ("KOI8-T", "80", 0x049B, "KOI8-T қ"),
     ("KOI8-T", "d1", 0x044F, "KOI8-T я (Cyrillic half, same layout as KOI8-R)"),
 ]
 
@@ -161,28 +161,15 @@ GB18030_LINEAR_FLAG_CASES = [
     ("GB18030", "813081304142", "" + "AB", "the ASCII \"AB\" right after a 4-byte BMP-gap character isn't corrupted"),
 ]
 
-# gen_tables.py invalid-lead-byte mis-combination (artifact) regression
-# check. uconv --callback skip skips an invalid lead byte one byte at a
-# time and decodes the following trail byte independently, so a naive pair
-# scan can mistakenly merge "invalid lead byte + trail byte" into the table
-# as if it were a legitimate 2-byte mapping (this actually happened for
-# CP932's 0xA0/0xFD/0xFE). This confirms that, after the fix, an invalid
-# lead byte is never mis-combined into a 2-byte character, and the lead
-# byte and trail byte are each output as independent characters.
-#
-# Note: the expected first characters (0xA0->U+00A0, 0xFD->U+00FD,
-# 0xFE->U+00FE, all identity values) were fixed by measurement, and it's
-# unresearched why this path (stack_cp932 judges it an invalid lead byte
-# and returns it as-is as a 1-byte value -> passed to mapping_cp932)
-# returns the identity value instead of fallback_policy (U+FFFD/'?'). What
-# this is meant to verify is that "no mis-combination into 2 bytes occurs"
-# (the output splits into 2 characters) — it does not guarantee the
-# specific value of the first character itself is correct.
+# An invalid CP932 lead byte followed by a trail byte is two characters, the
+# invalid byte shown as U+FFFD as in VS Code, never one 2-byte character.
+# Before the fork's tables only counted rows they have, such a byte showed
+# up as the Latin-1 character with its value.
 # (encoding, input byte sequence (hex), expected output string, description)
 CP932_INVALID_LEAD_BYTE_ARTIFACT_CASES = [
-    ("CP932", "a040", " " + "@", "CP932 0xA0 (outside the half-width katakana range) + '@' isn't mistakenly merged into a single character"),
-    ("CP932", "fd40", "ý" + "@", "CP932 0xFD (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
-    ("CP932", "fe40", "þ" + "@", "CP932 0xFE (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
+    ("CP932", "a040", "\ufffd@", "CP932 0xA0 (outside the half-width katakana range) + '@' isn't mistakenly merged into a single character"),
+    ("CP932", "fd40", "\ufffd@", "CP932 0xFD (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
+    ("CP932", "fe40", "\ufffd@", "CP932 0xFE (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
 ]
 
 # iso2022.c T_128 control-range-drop regression check (a case the G3 (SS3)
@@ -199,16 +186,15 @@ ISO2022_T128_CONTROL_RANGE_CASES = [
 
 # When several byte sequences decode to the same code point (CP932's
 # NEC/IBM duplicates, Big5's duplicated box-drawing characters, ...), the
-# input direction must send the bytes ICU itself encodes that code point to,
-# not whichever duplicate the reverse lookup happens to hit. The expected
-# bytes come from `uconv -t <converter>` (see gen_tables.py's
-# mark_decode_only()).
+# input direction must send the bytes VS Code saves that code point as
+# (iconv-lite, with converters.json's corrections), not whichever duplicate
+# the reverse lookup happens to hit (see gen_tables.py's mark_decode_only()).
 # (encoding, input text, expected hex sent to the child, description)
 INPUT_CANONICAL_BYTES_CASES = [
-    ("CP932", "￢ⅰ∵纊", "81cafa4081e6fa5c", "NEC/IBM duplicates encode like ICU ibm-943 (not 0xEEF9/0xEEEF)"),
-    ("euc-jp-2007", "￢∵", "a2cca2e8", "euc-jp-2007 duplicates encode like ICU"),
-    ("BIG5-HKSCS", "═", "f9f9", "Big5-HKSCS duplicated box drawing (0xA2A4/0xF9F9) encodes like ICU ibm-1375"),
-    ("KOI8-T", "қӯя", "80a1d1", "KOI8-T encodes through the iconv-lite table"),
+    ("CP932", "￢ⅰ∵纊", "81cafa4081e6fa5c", "NEC/IBM duplicates encode like VS Code (not 0xEEF9/0xEEEF)"),
+    ("euc-jp-2007", "￢∵", "a2cca2e8", "euc-jp-2007 duplicates encode like VS Code"),
+    ("BIG5-HKSCS", "═", "f9f9", "Big5-HKSCS duplicated box drawing (0xA2A4/0xF9F9) encodes like VS Code"),
+    ("KOI8-T", "қӯя", "80a1d1", "KOI8-T encodes through its table"),
     ("CP932", "\\¥~‾", "5c5c7e7e", "CP932 backslash/yen and tilde/overline both encode to 0x5C/0x7E (WHATWG)"),
 ]
 
@@ -912,7 +898,7 @@ def main() -> int:
         if not ok:
             failures += 1
 
-    print("\n== gen_tables.py invalid-lead-byte mis-combination (artifact) regression check ==")
+    print("\n== invalid CP932 lead bytes ==")
     for enc, hexin, expect_text, desc in CP932_INVALID_LEAD_BYTE_ARTIFACT_CASES:
         total += 1
         ok, detail = run_output_string_case(enc, hexin, expect_text)
@@ -921,7 +907,7 @@ def main() -> int:
         if not ok:
             failures += 1
 
-    print("\n== Input direction: duplicates encode to ICU's bytes (real PTY) ==")
+    print("\n== Input direction: duplicates encode to VS Code's bytes (real PTY) ==")
     for enc, text, expect_hex, desc in INPUT_CANONICAL_BYTES_CASES:
         total += 1
         ok, detail = run_input_bytes_case(enc, text, expect_hex)

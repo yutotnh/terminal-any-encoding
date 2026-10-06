@@ -166,6 +166,9 @@ static const OtherCharsetRec otherCharsets[] =
     /* PATCH(fork, fallback): replaced with the version that replaces unmapped codes with U+FFFD
      * (other_ja.c). stack reuses upstream's stack_gbk as-is. */
     {"GBK",        init_gbkx,    mapping_gbkx,    reverse_gbkx,    stack_gbk},
+    /* PATCH(fork, encodings): see other_ja.c */
+    {"GB2312",     init_gb2312x, mapping_gb2312x, reverse_gb2312x, stack_gbk},
+    {"CP949",      init_cp949,   mapping_cp949,   reverse_cp949,   stack_gbk},
     {"UTF-8",      init_utf8,    mapping_utf8,    reverse_utf8,    stack_utf8},
     {"SJIS",       init_sjis,    mapping_sjis,    reverse_sjis,    stack_sjis},
     /* PATCH(fork, fallback): same as above. stack reuses upstream's stack_hkscs. */
@@ -681,11 +684,13 @@ static const LocaleCharsetRec localeCharsets[] =
     {"KOI8-T",     0, 2, "ASCII", NULL,         "KOI8-T",        NULL,         NULL},
     {"TCVN",       0, 2, "ASCII", NULL,         "TCVN",          NULL,         NULL},
 
-    {"GB2312",     0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
+    /* PATCH(fork, encodings): GB 2312 and EUC-KR are read as VS Code reads
+     * them: with iconv-lite's gb2312 table, and as CP949 (other_ja.c). */
+    {"GB2312",     0, 1, NULL,    NULL,         NULL,            NULL,         "GB2312"},
     {"eucJP",      0, 1, "ASCII", "JIS X 0208", "JIS X 0201:GR", "JIS X 0212", NULL},
     /* PATCH(fork, euc-jp-2007): see docs/transcoder-design.md */
     {"euc-jp-2007", 0, 1, "ASCII", "JIS X 0208 (2007)", "JIS X 0201:GR", "JIS X 0212", NULL},
-    {"eucKR",      0, 1, "ASCII", "KSC 5601",   NULL,            NULL,         NULL},
+    {"eucKR",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP949"},
     {"eucCN",      0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
     {"eucTW",      0, 1, "ASCII", "CNS11643-1", "CNS11643-2",    "CNS11643-3", NULL},
     {"Big5",       0, 1, "ASCII", "Big 5",      NULL,            NULL,         NULL},

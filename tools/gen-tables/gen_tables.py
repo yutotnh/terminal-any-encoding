@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Generates the builtin charset table (builtin_ja.c) for the luit fork from ICU (uconv),
-and from iconv-lite for the encodings ICU has no converter for (KOI8-T).
+"""Generates the transcoder's built-in charset tables (builtin_ja.c and
+gb18030_ranges.c) from iconv-lite, the library VS Code decodes and encodes
+files with, so the terminal shows what the editor shows.
+
+Every byte sequence of a table's shape is decoded on its own, and a row
+encodes (is in luit's reverse index) only when its bytes are what the
+character should be sent as: iconv-lite's choice, with the corrections in
+converters.json.
 
 See docs/transcoder-design.md.
 
 Usage:
-    python3 gen_tables.py            # generates transcoder/src/builtin_ja.c
+    python3 gen_tables.py            # generates the tables and the golden hashes
     python3 gen_tables.py --check    # only verifies the output matches golden/tables.sha256 (for CI)
 """
 import hashlib
@@ -17,383 +23,140 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
 CONVERTERS_JSON = HERE / "converters.json"
+ICONV_LITE = HERE / "iconv_lite.js"
 GOLDEN_DIR = HERE / "golden"
 OUTPUT = REPO_ROOT / "transcoder" / "src" / "builtin_ja.c"
 GB18030_RANGES_OUTPUT = REPO_ROOT / "transcoder" / "src" / "gb18030_ranges.c"
 GB18030_RANGES_HEADER_OUTPUT = REPO_ROOT / "transcoder" / "src" / "gb18030_ranges.h"
 
-
-def icu_version() -> str:
-    out = subprocess.run(["icuinfo"], capture_output=True, text=True, check=True).stdout
-    for line in out.splitlines():
-        if 'name="version"' in line and "unicode" not in line and "cldr" not in line:
-            return line.split(">", 1)[1].split("<", 1)[0]
-    raise RuntimeError("could not get the version from icuinfo")
+# Must match BUILTIN_DECODE_ONLY in transcoder/src/luitconv.h.
+DECODE_ONLY = 0x80000000
 
 
-def run_uconv(converter: str, input_bytes: bytes) -> bytes:
-    # "substitute", not "skip": with skip, an invalid byte in a probed pair
-    # silently disappears, so e.g. CP932 0xD8 0x80 (a 1-byte katakana plus an
-    # invalid byte) came back as a single character and was recorded as a
-    # bogus 2-byte mapping. substitute turns the invalid byte into U+FFFD, so
-    # the result is no longer exactly one valid character and is dropped.
-    return subprocess.run(
-        ["uconv", "-f", converter, "-t", "UTF-8", "--callback", "substitute"],
-        input=input_bytes,
-        capture_output=True,
-        check=True,
-    ).stdout
+def iconv_lite(command: str, encoding: str = "", lines: list[str] | None = None) -> list[str]:
+    args = ["node", str(ICONV_LITE), command] + ([encoding] if encoding else [])
+    text = "\n".join(lines) + "\n" if lines else ""
+    out = subprocess.run(args, cwd=REPO_ROOT, input=text, capture_output=True, text=True, check=True).stdout
+    return out.split("\n")[: len(lines)] if lines is not None else [out]
 
 
-def run_uconv_reverse(converter: str, input_bytes: bytes) -> bytes:
-    """UTF-8 -> converter direction (the encode direction). Used when you want
-    to know "how many bytes does this code point encode to", like in
-    gen_plane_gb18030_4byte_ranges (the opposite direction of run_uconv)."""
-    return subprocess.run(
-        ["uconv", "-f", "UTF-8", "-t", converter, "--callback", "skip"],
-        input=input_bytes,
-        capture_output=True,
-        check=True,
-    ).stdout
+def iconv_lite_version() -> str:
+    return iconv_lite("version")[0]
 
 
-def gen_plane_g1(converter: str) -> list[tuple[int, int]]:
-    """Scans the 2-byte GR space (EUC form) and collects it converted to a GL 2-byte code (luit's internal representation)."""
-    payload = bytearray()
-    for b1 in range(0x80, 0x100):
-        for b2 in range(0x21, 0x100):
-            payload += bytes([b1, b2, 0x0A])
-    out = run_uconv(converter, bytes(payload))
-    lines = out.split(b"\n")
+def plane_sequences(plane: str) -> list[tuple[int, bytes]]:
+    """Every byte sequence of the plane's shape, with the source value luit
+    looks it up by:
+    - raw1byte: the byte, all 256 of them (T_128 single-byte sets, shift
+      0x80, and ISO 8859's T_96, whose upstream tables are keyed the same
+      way; luit's "ASCII" is iso8859-1's GL half, which upstream left to an
+      identity fallback)
+    - raw2byte: the raw byte or 2-byte value (OTHER charsets such as CP932
+      and GBK, and Big5's T_94192)
+    - g1: an EUC 2-byte GR sequence, as GL (the high bit of both bytes stripped)
+    - g3: EUC-JP's SS3 (0x8F) + 2 bytes, as GL
+    - kana: EUC-JP's SS2 (0x8E) + 1 byte, as the GR byte (JIS X 0201:GR)"""
+    gr = range(0xA1, 0xFF)
+    if plane == "raw1byte":
+        return [(b, bytes([b])) for b in range(0x100)]
+    if plane == "raw2byte":
+        singles = [(b, bytes([b])) for b in range(0x80, 0x100)]
+        pairs = [
+            ((l << 8) | t, bytes([l, t]))
+            for l in range(0x81, 0xFF)
+            for t in range(0x40, 0xFF)
+            if t != 0x7F
+        ]
+        return singles + pairs
+    if plane == "g1":
+        return [(((a & 0x7F) << 8) | (b & 0x7F), bytes([a, b])) for a in gr for b in gr]
+    if plane == "g3":
+        return [(((a & 0x7F) << 8) | (b & 0x7F), bytes([0x8F, a, b])) for a in gr for b in gr]
+    if plane == "kana":
+        return [(b, bytes([0x8E, b])) for b in range(0xA1, 0xE0)]
+    raise RuntimeError(f"unknown plane {plane}")
+
+
+def row_bytes(plane: str, src: int) -> bytes:
+    """The bytes a row stands for (the inverse of plane_sequences)."""
+    if plane == "raw1byte":
+        return bytes([src])
+    if plane == "raw2byte":
+        return bytes([src]) if src < 0x100 else bytes([src >> 8, src & 0xFF])
+    if plane == "g1":
+        return bytes([(src >> 8) | 0x80, (src & 0xFF) | 0x80])
+    if plane == "g3":
+        return bytes([0x8F, (src >> 8) | 0x80, (src & 0xFF) | 0x80])
+    if plane == "kana":
+        return bytes([0x8E, src])
+    raise RuntimeError(f"unknown plane {plane}")
+
+
+def gen_rows(encoding: str, plane: str) -> list[tuple[int, int]]:
+    """Decodes every sequence of the plane; keeps those that are exactly one
+    character (iconv-lite gives U+FFFD, or more than one character, for the
+    others)."""
+    seqs = plane_sequences(plane)
+    decoded = iconv_lite("decode", encoding, [b.hex() for _, b in seqs])
     rows = []
-    i = 0
-    for b1 in range(0x80, 0x100):
-        for b2 in range(0x21, 0x100):
-            if i < len(lines):
-                try:
-                    ch = lines[i].decode("utf-8")
-                except UnicodeDecodeError:
-                    ch = None
-                if ch is not None and len(ch) == 1 and ch != "�":
-                    if 0xA1 <= b1 <= 0xFE and 0xA1 <= b2 <= 0xFE:
-                        gl = ((b1 & 0x7F) << 8) | (b2 & 0x7F)
-                        rows.append((gl, ord(ch)))
-            i += 1
+    for (src, _), cps in zip(seqs, decoded):
+        parts = cps.split()
+        if len(parts) == 1 and parts[0] != "fffd":
+            rows.append((src, int(parts[0], 16)))
     return rows
 
 
-def gen_plane_g3(converter: str) -> list[tuple[int, int]]:
-    """Scans the SS3 (8F xx yy, JIS X 0212) 3-byte space and collects it converted to a GL 2-byte code."""
-    payload = bytearray()
-    for b1 in range(0x21, 0x7F):
-        for b2 in range(0x21, 0x7F):
-            payload += bytes([0x8F, b1 | 0x80, b2 | 0x80, 0x0A])
-    out = run_uconv(converter, bytes(payload))
-    lines = out.split(b"\n")
-    rows = []
-    i = 0
-    for b1 in range(0x21, 0x7F):
-        for b2 in range(0x21, 0x7F):
-            if i < len(lines):
-                try:
-                    ch = lines[i].decode("utf-8")
-                except UnicodeDecodeError:
-                    ch = None
-                if ch is not None and len(ch) == 1 and ch != "�":
-                    gl = (b1 << 8) | b2
-                    rows.append((gl, ord(ch)))
-            i += 1
-    return rows
+def mark_decode_only(
+    encoding: str, plane: str, rows: list[tuple[int, int]], corrections: dict[str, str]
+) -> list[tuple[int, int]]:
+    """A row encodes only when its bytes are what its character should be
+    sent as: iconv-lite's choice (VS Code saves it that way), unless
+    converters.json corrects it. Other rows are decode-only: duplicates
+    (luit's reverse lookup would otherwise pick one of them arbitrarily),
+    rows whose character is sent from another table (e.g. EUC-JP's IBM
+    extension kanji, sent as JIS X 0212 rather than from JIS X 0208's NEC
+    rows), and characters the editor can't save at all."""
+    chars = sorted({tgt for _, tgt in rows})
+    encoded = iconv_lite("encode", encoding, [f"{cp:x}" for cp in chars])
+    canonical = {cp: (None if b == "-" else bytes.fromhex(b)) for cp, b in zip(chars, encoded)}
+    for cp_hex, hexbytes in corrections.items():
+        canonical[int(cp_hex.removeprefix("U+"), 16)] = bytes.fromhex(hexbytes)
+    return [
+        (src, tgt) if canonical.get(tgt) == row_bytes(plane, src) else (src, tgt | DECODE_ONLY)
+        for src, tgt in rows
+    ]
 
 
-def gen_plane_raw1byte(converter: str) -> list[tuple[int, int]]:
-    """Builds a lookup table keyed directly on a single-byte encoding
-    Only covers 0x80-0xFF (0x00-0x7F is assumed to be ASCII,
-    handled separately by T_128 on the charset.c side)."""
-    payload = bytearray()
-    for b in range(0x80, 0x100):
-        payload += bytes([b, 0x0A])
-    out = run_uconv(converter, bytes(payload))
-    lines = out.split(b"\n")
-    rows = []
-    for i, b in enumerate(range(0x80, 0x100)):
-        if i < len(lines):
-            try:
-                ch = lines[i].decode("utf-8")
-            except UnicodeDecodeError:
-                ch = None
-            if ch is not None and len(ch) == 1 and ch != "�":
-                rows.append((b, ord(ch)))
-    return rows
-
-
-def gen_plane_kana(converter: str) -> list[tuple[int, int]]:
-    """Builds the half-width katakana half of JIS X 0201 (0xA1-0xDF), the
-    charset luit uses for EUC-JP's G2, by asking an EUC-JP converter for
-    each SS2 (0x8E) sequence. Keyed on the GR byte, as luit looks up
-    "JIS X 0201:GR" (shift 0x80)."""
-    payload = bytearray()
-    for b in range(0xA1, 0xE0):
-        payload += bytes([0x8E, b, 0x0A])
-    lines = run_uconv(converter, bytes(payload)).split(b"\n")
-    rows = []
-    for i, b in enumerate(range(0xA1, 0xE0)):
-        ch = lines[i].decode("utf-8") if i < len(lines) else ""
-        if len(ch) == 1 and ch != "\ufffd":
-            rows.append((b, ord(ch)))
-    return rows
-
-
-def gen_plane_raw2byte(converter: str) -> list[tuple[int, int]]:
-    """Collects the raw 2-byte space of things like SJIS directly as source (no coordinate conversion).
-
-    Feeding an invalid lead byte (e.g. CP932's 0xFD/0xFE) through uconv
-    --callback skip 2 bytes at a time can result in only the lead byte
-    being skipped as invalid, while the following trail byte gets decoded
-    independently as a standalone 1-byte character. This isn't a
-    legitimate 2-byte mapping of (lead byte, trail byte) — it's an
-    artifact that merely happens to coincide with the result of decoding
-    the trail byte alone.
-    So each trail byte is compared against decoding it standalone (solo),
-    and if every entry for a given lead byte matches solo, that whole lead
-    byte is treated as invalid (an artifact) and excluded."""
-    trail_bytes = [b for b in range(0x40, 0x100) if b != 0x7F]
-
-    solo_payload = bytearray()
-    for b in trail_bytes:
-        solo_payload += bytes([b, 0x0A])
-    solo_out = run_uconv(converter, bytes(solo_payload)).split(b"\n")
-    solo: dict[int, str] = {}
-    for i, b in enumerate(trail_bytes):
-        if i < len(solo_out):
-            try:
-                ch = solo_out[i].decode("utf-8")
-            except UnicodeDecodeError:
-                ch = None
-            if ch is not None and len(ch) == 1 and ch != "�":
-                solo[b] = ch
-
-    payload = bytearray()
-    pairs = []
-    for b1 in range(0x81, 0xFF):
-        for b2 in trail_bytes:
-            pairs.append((b1, b2))
-            payload += bytes([b1, b2, 0x0A])
-    out = run_uconv(converter, bytes(payload))
-    lines = out.split(b"\n")
-    decoded: dict[int, list[tuple[int, str]]] = {}
-    for idx, (b1, b2) in enumerate(pairs):
-        if idx < len(lines):
-            try:
-                ch = lines[idx].decode("utf-8")
-            except UnicodeDecodeError:
-                ch = None
-            if ch is not None and len(ch) == 1 and ch != "�":
-                decoded.setdefault(b1, []).append((b2, ch))
-
-    rows = []
-    for b1, entries in decoded.items():
-        if entries and all(solo.get(b2) == ch for b2, ch in entries):
-            print(
-                f"  warning: excluding lead byte 0x{b1:02X} of {converter} as invalid"
-                " (an artifact that matches standalone trail-byte decoding across every entry)",
-                file=sys.stderr,
-            )
-            continue
-        for b2, ch in entries:
-            rows.append(((b1 << 8) | b2, ord(ch)))
-    return rows
-
-
-def gen_plane_gb18030_4byte_ranges(converter: str) -> list[tuple[int, int]]:
-    """Compactly extracts GB18030's 4-byte region (the BMP gaps + supplementary
-    planes) as contiguous ranges of the linear index. Looking up the entire
-    range one by one would produce over a million entries for the
-    supplementary planes alone, so this uses a range table instead.
-
-    The return value can't be squeezed into simple (source, target) pairs
-    like (unicode_start<<32 | unicode_end, linear_start), so unlike the
-    other planes, the caller assembles it separately. This returns a list
-    of [(unicode_start, unicode_end, linear_start), ...] tuples (BMP only;
-    the supplementary planes are handled by a single formula,
-    codepoint-0x10000+189000, so they're not included in the table).
-    """
+def gen_gb18030_4byte_ranges(encoding: str) -> list[tuple[int, int, int]]:
+    """GB18030's 4-byte sequences for the BMP, as contiguous ranges of the
+    linear index: [(unicode_start, unicode_end, linear_start), ...]. Over a
+    million entries one by one otherwise. The supplementary planes are a
+    single formula (codepoint - 0x10000 + 189000) on the other_ja.c side."""
 
     def linear(b: bytes) -> int:
         b1, b2, b3, b4 = b
         return ((b1 - 0x81) * 10 + (b2 - 0x30)) * 1260 + (b3 - 0x81) * 10 + (b4 - 0x30)
 
     cps = [cp for cp in range(0x80, 0x10000) if not (0xD800 <= cp <= 0xDFFF)]
-    results: dict[int, bytes] = {}
-    batch_size = 500
-    i = 0
-    while i < len(cps):
-        chunk = cps[i : i + batch_size]
-        payload = ("\x00".join(chr(c) for c in chunk)).encode("utf-8")
-        out = run_uconv_reverse(converter, payload)
-        parts = out.split(b"\x00")
-        if len(parts) != len(chunk):
-            raise RuntimeError(
-                f"GB18030 4-byte range extraction: batch split count mismatch ({len(parts)} != {len(chunk)})."
-                " The NUL-delimited assumption may no longer hold."
-            )
-        for cp, part in zip(chunk, parts):
-            results[cp] = part
-        i += batch_size
-
+    encoded = iconv_lite("encode", encoding, [f"{cp:x}" for cp in cps])
     ranges: list[tuple[int, int, int]] = []
-    cur_start: int | None = None
-    prev_cp: int | None = None
-    prev_linear: int | None = None
-    range_linear_start: int | None = None
-    for cp in cps:
-        b = results.get(cp)
-        is4 = b is not None and len(b) == 4
-        if is4:
-            L = linear(b)
-            if cur_start is None:
-                cur_start = cp
-                range_linear_start = L
-            elif L != prev_linear + 1 or cp != prev_cp + 1:  # type: ignore[operator]
-                ranges.append((cur_start, prev_cp, range_linear_start))  # type: ignore[arg-type]
-                cur_start = cp
-                range_linear_start = L
-            prev_cp = cp
-            prev_linear = L
-        else:
-            if cur_start is not None:
-                ranges.append((cur_start, prev_cp, range_linear_start))  # type: ignore[arg-type]
-                cur_start = None
-    if cur_start is not None:
-        ranges.append((cur_start, prev_cp, range_linear_start))  # type: ignore[arg-type]
-
-    return ranges  # type: ignore[return-value]
-
-
-def iconv_lite_version() -> str:
-    pkg = REPO_ROOT / "node_modules" / "iconv-lite" / "package.json"
-    return json.loads(pkg.read_text(encoding="utf-8"))["version"]
-
-
-def gen_iconv_lite_raw1byte(encoding: str) -> list[tuple[int, int]]:
-    """Builds a single-byte table by decoding each byte with iconv-lite, the
-    library VS Code itself decodes files with. Only for encodings ICU has no
-    converter for (KOI8-T); the version is pinned by package-lock.json, like
-    ICU's by icu_version_expected. Same shape as gen_plane_raw1byte
-    (0x80-0xFF)."""
-    script = (
-        "const iconv = require('iconv-lite');"
-        "const enc = process.argv[1];"
-        "if (!iconv.encodingExists(enc)) process.exit(2);"
-        "const out = [];"
-        "for (let b = 0x80; b < 0x100; b++) out.push(iconv.decode(Buffer.from([b]), enc));"
-        "process.stdout.write(JSON.stringify(out));"
-    )
-    out = subprocess.run(
-        ["node", "-e", script, encoding], cwd=REPO_ROOT, capture_output=True, text=True, check=True
-    ).stdout
-    rows = []
-    for b, ch in zip(range(0x80, 0x100), json.loads(out)):
-        # Unmapped bytes decode to U+FFFD.
-        if len(ch) == 1 and ch != "\ufffd":
-            rows.append((b, ord(ch)))
-    return rows
-
-
-def crosscheck_raw1byte(name: str, rows: list[tuple[int, int]], crosscheck: dict) -> None:
-    """Fails unless the table matches every independent implementation
-    listed (Python's codec, glibc's iconv) byte for byte. They're only
-    compared against, never embedded (glibc's data is LGPL)."""
-    expected = dict(rows)
-    references = {}
-    if "python" in crosscheck:
-        table = {}
-        for b in range(0x80, 0x100):
-            try:
-                table[b] = ord(bytes([b]).decode(crosscheck["python"]))
-            except UnicodeDecodeError:
-                pass
-        references[f"Python {crosscheck['python']}"] = table
-    if "glibc" in crosscheck:
-        table = {}
-        for b in range(0x80, 0x100):
-            r = subprocess.run(
-                ["iconv", "-f", crosscheck["glibc"], "-t", "UTF-8"], input=bytes([b]), capture_output=True
-            )
-            if r.returncode == 0:
-                ch = r.stdout.decode("utf-8")
-                if len(ch) == 1:
-                    table[b] = ord(ch)
-        if not table:
-            raise RuntimeError(f"{name}: iconv doesn't know {crosscheck['glibc']}; install glibc's iconv to cross-check")
-        references[f"glibc {crosscheck['glibc']}"] = table
-    for label, table in references.items():
-        if table != expected:
-            diff = sorted(b for b in set(table) | set(expected) if table.get(b) != expected.get(b))
-            raise RuntimeError(f"{name}: differs from {label} at {[hex(b) for b in diff]}")
-        print(f"  {name}: matches {label}", file=sys.stderr)
-
-
-def table_source(m: dict) -> str:
-    return f"iconv-lite {m['iconv_lite']}" if "iconv_lite" in m else m["icu_converter"]
-
-
-PLANE_GENERATORS = {
-    "g1": gen_plane_g1,
-    "g3": gen_plane_g3,
-    "raw2byte": gen_plane_raw2byte,
-    "raw1byte": gen_plane_raw1byte,
-    "kana": gen_plane_kana,
-}
-
-
-# Must match BUILTIN_DECODE_ONLY in transcoder/src/luitconv.h.
-DECODE_ONLY = 0x80000000
-
-
-def icu_bytes_to_source(plane: str, b: bytes) -> int | None:
-    """Converts ICU's encoded bytes for one character into this table's
-    source representation (the inverse of what each gen_plane_* does).
-    Returns None if the bytes don't belong to this plane."""
-    if plane == "g1" and len(b) == 2 and 0xA1 <= b[0] <= 0xFE and 0xA1 <= b[1] <= 0xFE:
-        return ((b[0] & 0x7F) << 8) | (b[1] & 0x7F)
-    if plane == "g3" and len(b) == 3 and b[0] == 0x8F:
-        return ((b[1] & 0x7F) << 8) | (b[2] & 0x7F)
-    if plane == "raw1byte" and len(b) == 1:
-        return b[0]
-    if plane == "raw2byte" and len(b) == 2:
-        return (b[0] << 8) | b[1]
-    if plane == "kana" and len(b) == 2 and b[0] == 0x8E:
-        return b[1]
-    return None
-
-
-def mark_decode_only(name: str, plane: str, converter: str, rows: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """When several source codes decode to the same code point (e.g. CP932's
-    U+FFE2 at 0x81CA/0xEEF9/0xFA54), luit's reverse lookup would pick one of
-    them arbitrarily (bsearch over duplicates). Ask ICU which bytes it
-    encodes that code point to, and flag every other duplicate as
-    decode-only so it stays out of the reverse index. If ICU's choice isn't
-    one of the candidates, leave the group alone and warn."""
-    by_target: dict[int, list[int]] = {}
-    for src, tgt in rows:
-        by_target.setdefault(tgt, []).append(src)
-    dups = sorted(t for t, srcs in by_target.items() if len(srcs) > 1)
-    if not dups:
-        return rows
-    out = run_uconv_reverse(converter, "".join(chr(t) + "\n" for t in dups).encode("utf-8")).split(b"\n")
-    decode_only: set[tuple[int, int]] = set()
-    for tgt, encoded in zip(dups, out):
-        canonical = icu_bytes_to_source(plane, encoded)
-        if canonical not in by_target[tgt]:
-            print(
-                f"  warning: {name}: ICU encodes U+{tgt:04X} as {encoded.hex()}, which isn't one of"
-                f" {[hex(s) for s in by_target[tgt]]}; leaving that group as-is",
-                file=sys.stderr,
-            )
-            continue
-        decode_only.update((src, tgt) for src in by_target[tgt] if src != canonical)
-    return [(src, tgt | DECODE_ONLY) if (src, tgt) in decode_only else (src, tgt) for src, tgt in rows]
+    start = prev_cp = prev_linear = range_linear_start = None
+    for cp, hexbytes in zip(cps, encoded):
+        b = bytes.fromhex(hexbytes) if hexbytes != "-" else b""
+        if len(b) == 4:
+            lin = linear(b)
+            if start is None:
+                start, range_linear_start = cp, lin
+            elif lin != prev_linear + 1 or cp != prev_cp + 1:
+                ranges.append((start, prev_cp, range_linear_start))
+                start, range_linear_start = cp, lin
+            prev_cp, prev_linear = cp, lin
+        elif start is not None:
+            ranges.append((start, prev_cp, range_linear_start))
+            start = None
+    if start is not None:
+        ranges.append((start, prev_cp, range_linear_start))
+    return ranges
 
 
 def format_target(tgt: int) -> str:
@@ -406,33 +169,34 @@ def c_identifier(name: str) -> str:
     return "tbl_" + "".join(c if c.isalnum() else "_" for c in name)
 
 
-def render_builtin_ja_c(
-    tables: dict[str, list[tuple[int, int]]], meta: list[dict], version: str, iconv_lite: str | None
-) -> str:
+LICENSE_NOTE = [
+    " * Licensing: mapping data is derived from iconv-lite (MIT, Copyright (c)",
+    " * 2011 Alexander Shtuchkin), whose tables come from the WHATWG Encoding",
+    " * Standard and the Unicode Consortium's mapping files -- see",
+    " * THIRD-PARTY-NOTICES.md. No glibc-derived data is used.",
+]
+
+
+def render_builtin_ja_c(tables: dict[str, list[tuple[int, int]]], meta: list[dict], version: str) -> str:
     lines = []
     lines.append("/*")
     lines.append(" * builtin_ja.c -- additional builtin charset tables (fork-local, not upstream)")
     lines.append(" *")
     lines.append(" * GENERATED FILE - do not edit by hand.")
-    lines.append(" * Generated by tools/gen-tables/gen_tables.py from ICU (uconv) converters,")
-    lines.append(" * and from iconv-lite for the encodings ICU has no converter for.")
-    lines.append(f" * ICU version at generation time: {version}")
-    if iconv_lite:
-        lines.append(f" * iconv-lite version at generation time: {iconv_lite}")
+    lines.append(" * Generated by tools/gen-tables/gen_tables.py from iconv-lite, the library")
+    lines.append(" * VS Code decodes and encodes files with.")
+    lines.append(f" * iconv-lite version at generation time: {version}")
     lines.append(" * See tools/gen-tables/converters.json for the declarative source list,")
     lines.append(" * and docs/transcoder-design.md for the design rationale.")
     lines.append(" *")
-    lines.append(" * Licensing: mapping data is derived from ICU (Unicode License V3,")
-    lines.append(" * Copyright (c) 2016-2025 Unicode, Inc.) and iconv-lite (MIT,")
-    lines.append(" * Copyright (c) 2011 Alexander Shtuchkin) -- see THIRD-PARTY-NOTICES.md.")
-    lines.append(" * No glibc-derived data is used.")
+    lines += LICENSE_NOTE
     lines.append(" */")
     lines.append("#include <other.h>")
     lines.append("#include <sys.h>")
     lines.append("#include <luitconv.h>")
     lines.append("")
-    lines.append("/* A source code that decodes to the same code point as another one, but")
-    lines.append(" * that ICU doesn't encode that code point to, is decode-only. */")
+    lines.append("/* A row whose bytes aren't what its code point is sent as is decode-only:")
+    lines.append(" * it stays out of luit's reverse index. */")
     lines.append("#define DECODE_ONLY(ucs) (BUILTIN_DECODE_ONLY | (ucs))")
     lines.append("")
     lines.append("/* *INDENT-OFF* */")
@@ -441,7 +205,7 @@ def render_builtin_ja_c(
         rows = tables[m["name"]]
         n_override = len(m.get("overrides", []))
         override_note = f", +{n_override} overrides (applied in array order, last wins)" if n_override else ""
-        lines.append(f"/* {m['name']}: source={table_source(m)} plane={m['plane']} entries={len(rows)}{override_note}")
+        lines.append(f"/* {m['name']}: iconv-lite {m['encoding']} plane={m['plane']} entries={len(rows)}{override_note}")
         lines.append(f" * {m['comment']} */")
         lines.append(f"static const BuiltInMapping {ident}[] =")
         lines.append("{")
@@ -462,15 +226,14 @@ def render_builtin_ja_c(
     return "\n".join(lines)
 
 
-def render_gb18030_ranges_c(ranges: list[tuple[int, int, int]], converter: str, version: str) -> str:
+def render_gb18030_ranges_c(ranges: list[tuple[int, int, int]], encoding: str, version: str) -> str:
     lines = []
     lines.append("/*")
     lines.append(" * gb18030_ranges.c -- GB18030 4-byte range table (fork-local, not upstream)")
     lines.append(" *")
     lines.append(" * GENERATED FILE - do not edit by hand.")
-    lines.append(" * Generated by tools/gen-tables/gen_tables.py from ICU (uconv) converter"
-                  f" {converter}.")
-    lines.append(f" * ICU version at generation time: {version}")
+    lines.append(f" * Generated by tools/gen-tables/gen_tables.py from iconv-lite's {encoding}.")
+    lines.append(f" * iconv-lite version at generation time: {version}")
     lines.append(" *")
     lines.append(" * Instead of fully expanding GB18030's 4-byte region (the BMP gaps +")
     lines.append(" * supplementary planes), this holds it compactly as contiguous ranges of")
@@ -478,7 +241,7 @@ def render_gb18030_ranges_c(ranges: list[tuple[int, int, int]], converter: str, 
     lines.append(" * handled by a single formula (linear = cp-0x10000+189000) on the")
     lines.append(" * other_ja.c side, so they're not included in this table.")
     lines.append(" *")
-    lines.append(" * Licensing: derived from ICU (Unicode License V3). See THIRD-PARTY-NOTICES.md.")
+    lines += LICENSE_NOTE
     lines.append(" */")
     lines.append("#include \"gb18030_ranges.h\"")
     lines.append("")
@@ -513,64 +276,32 @@ extern const unsigned gb18030_bmp_ranges_count;
 """
 
 
-def build() -> tuple[str, dict[str, str]]:
+def build() -> tuple[str, dict[str, str], str]:
     decl = json.loads(CONVERTERS_JSON.read_text(encoding="utf-8"))
-    version = icu_version()
-    expected = decl.get("icu_version_expected")
-    if expected and version != expected:
-        print(
-            f"warning: the ICU version differs from what's expected (expected {expected}, actual {version})."
-            " The table contents may change as a result.",
-            file=sys.stderr,
-        )
+    version = iconv_lite_version()
+    corrections = decl.get("encode_corrections", {})
 
     tables: dict[str, list[tuple[int, int]]] = {}
     for m in decl["tables"]:
-        if "iconv_lite" in m:
-            if m["plane"] != "raw1byte":
-                raise RuntimeError(f"{m['name']}: iconv-lite tables are raw1byte only")
-            rows = sorted(gen_iconv_lite_raw1byte(m["iconv_lite"]))
-            targets = [tgt for _, tgt in rows]
-            if len(targets) != len(set(targets)):
-                # Without ICU there's no way to tell which duplicate encodes.
-                raise RuntimeError(f"{m['name']}: duplicate targets; decode-only marking needs ICU")
-        else:
-            gen = PLANE_GENERATORS[m["plane"]]
-            rows = gen(m["icu_converter"])
-            rows.sort()
-            rows = mark_decode_only(m["name"], m["plane"], m["icu_converter"], rows)
-        if "crosscheck" in m:
-            crosscheck_raw1byte(m["name"], rows, m["crosscheck"])
-        overrides = m.get("overrides", [])
-        override_rows = [(int(o["source"], 16), int(o["target"], 16)) for o in overrides]
-        # Override rows go "after" the base rows.
-        # initializeBuiltInTable() (luitconv.c) processes the array in
-        # order from the start, and decoding (table_utf8[source]) has "the
-        # last entry with the same source wins", so putting the override
-        # at the end lets it override the decode result. Meanwhile, the
-        # encode-direction reverse lookup table (rev_index) accumulates
-        # every entry unconditionally, so both the base row's target and
-        # the override row's target are accepted when encoding (e.g. the
-        # wave dash position can be encoded as either U+301C (override) or
-        # U+FF5E (base)). This asymmetry is what the overrides rely on.
+        rows = sorted(gen_rows(m["encoding"], m["plane"]))
+        # Override rows go "after" the base rows. initializeBuiltInTable()
+        # (luitconv.c) processes the array in order, and decoding
+        # (table_utf8[source]) has "the last entry with the same source
+        # wins", so the override decides what's displayed; whether a row
+        # encodes is decided like for any other row (mark_decode_only).
         # See docs/transcoder-design.md for details.
-        rows = rows + override_rows
+        overrides = [(int(o["source"], 16), int(o["target"], 16)) for o in m.get("overrides", [])]
+        rows = mark_decode_only(m["encoding"], m["plane"], rows + overrides, corrections.get(m["encoding"], {}))
         tables[m["name"]] = rows
-        extra = f" (+{len(override_rows)} overrides)" if override_rows else ""
-        print(f"  {m['name']:20s} ({table_source(m)}, {m['plane']:9s}) -> {len(rows)} entries{extra}", file=sys.stderr)
+        extra = f" (+{len(overrides)} overrides)" if overrides else ""
+        print(f"  {m['name']:20s} ({m['encoding']}, {m['plane']:8s}) -> {len(rows)} entries{extra}", file=sys.stderr)
 
-    uses_iconv_lite = any("iconv_lite" in m for m in decl["tables"])
-    source = render_builtin_ja_c(
-        tables, decl["tables"], version, iconv_lite_version() if uses_iconv_lite else None
-    )
+    source = render_builtin_ja_c(tables, decl["tables"], version)
 
-    gb18030_source = None
-    gb18030_ranges: list[tuple[int, int, int]] = []
-    gb18030_decl = decl.get("gb18030_4byte_ranges")
-    if gb18030_decl:
-        gb18030_ranges = gen_plane_gb18030_4byte_ranges(gb18030_decl["icu_converter"])
-        print(f"  gb18030_bmp_ranges   ({gb18030_decl['icu_converter']}, 4byte-ranges) -> {len(gb18030_ranges)} ranges", file=sys.stderr)
-        gb18030_source = render_gb18030_ranges_c(gb18030_ranges, gb18030_decl["icu_converter"], version)
+    gb18030_encoding = decl["gb18030_4byte_ranges"]["encoding"]
+    gb18030_ranges = gen_gb18030_4byte_ranges(gb18030_encoding)
+    print(f"  gb18030_bmp_ranges   ({gb18030_encoding}, 4-byte ranges) -> {len(gb18030_ranges)} ranges", file=sys.stderr)
+    gb18030_source = render_gb18030_ranges_c(gb18030_ranges, gb18030_encoding, version)
 
     hashes = {}
     for m in decl["tables"]:
@@ -579,32 +310,17 @@ def build() -> tuple[str, dict[str, str]]:
             h.update(f"{src:04X} {tgt:04X}\n".encode("ascii"))
         hashes[m["name"]] = h.hexdigest()
     hashes["builtin_ja.c"] = hashlib.sha256(source.encode("utf-8")).hexdigest()
-
-    if gb18030_source is not None:
-        h = hashlib.sha256()
-        for us, ue, ls in gb18030_ranges:
-            h.update(f"{us:05X} {ue:05X} {ls}\n".encode("ascii"))
-        hashes["gb18030_bmp_ranges"] = h.hexdigest()
-        hashes["gb18030_ranges.c"] = hashlib.sha256(gb18030_source.encode("utf-8")).hexdigest()
+    h = hashlib.sha256()
+    for us, ue, ls in gb18030_ranges:
+        h.update(f"{us:05X} {ue:05X} {ls}\n".encode("ascii"))
+    hashes["gb18030_bmp_ranges"] = h.hexdigest()
+    hashes["gb18030_ranges.c"] = hashlib.sha256(gb18030_source.encode("utf-8")).hexdigest()
 
     return source, hashes, gb18030_source
 
 
 def main() -> int:
     check_only = "--check" in sys.argv
-    if check_only:
-        # The golden hashes (and builtin_ja.c's header) are tied to one ICU
-        # version, so a different ICU can never pass. Say so up front instead
-        # of reporting a wall of hash mismatches.
-        expected = json.loads(CONVERTERS_JSON.read_text(encoding="utf-8")).get("icu_version_expected")
-        version = icu_version()
-        if expected and version != expected:
-            print(
-                f"NG: ICU {version} is installed, but the golden hashes were generated with ICU {expected}"
-                " (icu_version_expected in converters.json). Run this with that ICU version.",
-                file=sys.stderr,
-            )
-            return 1
     source, hashes, gb18030_source = build()
 
     golden_path = GOLDEN_DIR / "tables.sha256"
@@ -623,6 +339,9 @@ def main() -> int:
             if recorded.get(name) != h:
                 print(f"NG: {name}'s hash doesn't match golden (current {h}, golden {recorded.get(name)})", file=sys.stderr)
                 ok = False
+        for name in sorted(set(recorded) - set(hashes)):
+            print(f"NG: golden lists {name}, which is no longer generated", file=sys.stderr)
+            ok = False
         if ok:
             print("OK: every table matched the golden hash.", file=sys.stderr)
             return 0
@@ -630,11 +349,9 @@ def main() -> int:
 
     OUTPUT.write_text(source, encoding="utf-8")
     print(f"generated: {OUTPUT} ({len(source)} bytes)", file=sys.stderr)
-
-    if gb18030_source is not None:
-        GB18030_RANGES_OUTPUT.write_text(gb18030_source, encoding="utf-8")
-        GB18030_RANGES_HEADER_OUTPUT.write_text(GB18030_RANGES_HEADER, encoding="utf-8")
-        print(f"generated: {GB18030_RANGES_OUTPUT} ({len(gb18030_source)} bytes)", file=sys.stderr)
+    GB18030_RANGES_OUTPUT.write_text(gb18030_source, encoding="utf-8")
+    GB18030_RANGES_HEADER_OUTPUT.write_text(GB18030_RANGES_HEADER, encoding="utf-8")
+    print(f"generated: {GB18030_RANGES_OUTPUT} ({len(gb18030_source)} bytes)", file=sys.stderr)
 
     GOLDEN_DIR.mkdir(exist_ok=True)
     with golden_path.open("w", encoding="utf-8") as f:

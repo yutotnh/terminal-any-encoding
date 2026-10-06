@@ -821,17 +821,20 @@ findBuiltinEncoding(const char *encoding_name)
     size_t n;
     const BuiltInCharsetRec *result = NULL;
 
-    for (n = 0; builtin_encodings[n].name != NULL; ++n) {
-	if (!lcStrCmp(encoding_name, builtin_encodings[n].name)) {
-	    result = &(builtin_encodings[n]);
+    /* PATCH(fork, builtin tables): the fork's tables (builtin_ja.c, made
+     * from iconv-lite like VS Code's editor) come first, so the ones with
+     * an upstream name (iso8859-*, koi8-*) replace upstream's. */
+    for (n = 0; builtin_encodings_ja[n].name != NULL; ++n) {
+	if (!lcStrCmp(encoding_name, builtin_encodings_ja[n].name)) {
+	    result = &(builtin_encodings_ja[n]);
 	    break;
 	}
     }
 
     if (result == NULL) {
-	for (n = 0; builtin_encodings_ja[n].name != NULL; ++n) {
-	    if (!lcStrCmp(encoding_name, builtin_encodings_ja[n].name)) {
-		result = &(builtin_encodings_ja[n]);
+	for (n = 0; builtin_encodings[n].name != NULL; ++n) {
+	    if (!lcStrCmp(encoding_name, builtin_encodings[n].name)) {
+		result = &(builtin_encodings[n]);
 		break;
 	    }
 	}
@@ -1323,12 +1326,14 @@ luitMapCodeValueFound(unsigned code, FontMapPtr fontmap_ptr, unsigned *out)
 
     for (search = all_conversions; search != NULL; search = search->next) {
 	if (&(search->mapping) == fontmap_ptr) {
-	    if (code < search->table_size) {
-		unsigned v = search->table_utf8[code].ucs;
-		if (v != 0 || code == 0) {
-		    *out = v;
-		    return 1;
-		}
+	    /* Only codes the table has a row for: initializeBuiltInTable()
+	     * presets ucs = code for the first `length` codes (upstream's
+	     * identity fallback), so ucs alone can't tell. A row's text is
+	     * set. */
+	    if (code < search->table_size
+		&& search->table_utf8[code].text != NULL) {
+		*out = search->table_utf8[code].ucs;
+		return 1;
 	    }
 	    return 0;
 	}

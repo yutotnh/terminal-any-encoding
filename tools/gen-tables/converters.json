@@ -1,230 +1,316 @@
 {
-  "$comment": "Declares the builtin charset tables generated for the luit fork from ICU (uconv), or from iconv-lite (\"iconv_lite\") for encodings ICU has no converter for. The ICU version is pinned in the devcontainer/CI, iconv-lite's by package-lock.json, so the generated tables are reproducible.",
-  "icu_version_expected": "78.2",
+  "$comment": "The transcoder's built-in charset tables, generated from iconv-lite (pinned by package-lock.json), the library VS Code decodes and encodes files with. A table named like one of upstream's (iso8859-*, koi8-*, ...) replaces it. encode_corrections: what a character is sent as where iconv-lite's encoder doesn't give back the bytes it was decoded from.",
+  "encode_corrections": {
+    "eucjp": {
+      "U+FF5E": "a1c1",
+      "U+2116": "ade2",
+      "U+301C": "a1c1"
+    },
+    "shiftjis": {
+      "U+301C": "8160"
+    },
+    "$comment": "iconv-lite saves EUC-JP's ～ (decoded from 0xA1C1) as 0x8FA2B7 and № (from 0xADE2) as 0x8FA2F1, which other tools can't read (VS Code issue #48802, iconv-lite #145; the wave-dash-unify extension corrects it on save). With these, every EUC-JP character with several byte sequences is sent as glibc's EUC-JP-MS sends it. U+301C, which iconv-lite can't encode, is the wave dash."
+  },
   "tables": [
     {
       "name": "jisx0208-2007-0",
-      "icu_converter": "euc-jp-2007",
+      "encoding": "eucjp",
       "plane": "g1",
-      "comment": "The G1 (2-byte GR) plane of WHATWG/ICU euc-jp-2007. A superset table including JIS X 0208 + NEC special characters + IBM extensions. Referenced by charset.c's \"JIS X 0208 (2007)\" (T_9494).",
+      "comment": "EUC-JP's G1 (JIS X 0208 with NEC and IBM extensions). Its own name keeps stock eucJP's jisx0208.1990-0 untouched.",
       "overrides": [
         {
           "source": "0x2141",
           "target": "0x301C",
-          "comment": "Wave dash position (EUC A1C1). Uses U+301C for decoding instead of WHATWG's default U+FF5E. The base row (U+FF5E) remains for encoding, so both are accepted (an asymmetric mapping)."
+          "comment": "Wave dash (U+301C) for display, not the editor's U+FF5E: what JIS X 0208 means there, and what glibc's EUC-JP and Shift_JIS decode it to."
         }
       ]
     },
     {
       "name": "jisx0212.1990-0",
-      "icu_converter": "euc-jp-2007",
+      "encoding": "eucjp",
       "plane": "g3",
-      "comment": "Standard JIS X 0212 (via SS3). Shared between glibc EUC-JP-MS and ICU euc-jp-2007, so it can be reused for future variants too. Overrides charset.c's \"JIS X 0212\" (the existing xlfd name jisx0212.1990-0)."
+      "comment": "EUC-JP's G3 (JIS X 0212, SS3 0x8F)."
+    },
+    {
+      "name": "jisx0201.1976-0",
+      "encoding": "eucjp",
+      "plane": "kana",
+      "comment": "EUC-JP's G2: JIS X 0201's half-width katakana (SS2 0x8E). Only the GR half; no supported encoding uses JIS-Roman."
     },
     {
       "name": "cp932-direct-0",
-      "icu_converter": "ibm-943_P15A-2003",
+      "encoding": "shiftjis",
       "plane": "raw2byte",
-      "comment": "The default CP932 (Windows-31J) variant. SJIS->JIS's coordinate conversion formula can't handle the IBM extension range (0xFA-0xFC, etc.), so this is a direct raw-byte lookup instead (other_ja.c).",
+      "comment": "Shift JIS as VS Code reads it (CP932), keyed on the raw bytes (other_ja.c): SJIS's coordinate formula can't handle the IBM extension rows.",
       "overrides": [
         {
           "source": "0x8160",
           "target": "0x301C",
-          "comment": "Wave dash position (SJIS 0x8160). Same policy as the EUC-JP side."
+          "comment": "Wave dash (U+301C) for display, not the editor's U+FF5E: what JIS X 0208 means there, and what glibc's EUC-JP and Shift_JIS decode it to."
         }
       ]
     },
     {
-      "name": "gb18030-2byte-0",
-      "icu_converter": "GB18030",
-      "plane": "raw2byte",
-      "comment": "GB18030's 2-byte part (the GBK-compatible range). A direct raw-byte lookup. Same approach as CP932 (other_ja.c)."
-    },
-    {
-      "name": "cp852-direct-0",
-      "icu_converter": "ibm-852",
-      "plane": "raw1byte",
-      "comment": "CP852 (Central European DOS). stock luit's xlfd \"ibm-cp852\" had no data and was unmapped (confirmed by measurement)."
-    },
-    {
-      "name": "cp857-direct-0",
-      "icu_converter": "ibm-857",
-      "plane": "raw1byte",
-      "comment": "CP857 (Turkish DOS). Newly added for the same reason as CP852."
-    },
-    {
-      "name": "cp1125-direct-0",
-      "icu_converter": "ibm-1125",
-      "plane": "raw1byte",
-      "comment": "CP1125 (Ukrainian DOS). stock luit had no corresponding table and was unmapped."
-    },
-    {
-      "name": "macroman-direct-0",
-      "icu_converter": "macintosh",
-      "plane": "raw1byte",
-      "comment": "Mac Roman. stock luit didn't recognize the -encoding name and silently fell back to ISO8859-1 (confirmed by measurement: Warning couldn't find charset data)."
-    },
-    {
-      "name": "koi8t-direct-0",
-      "iconv_lite": "koi8t",
-      "plane": "raw1byte",
-      "crosscheck": {
-        "python": "koi8_t",
-        "glibc": "KOI8-T"
-      },
-      "comment": "KOI8-T (Tajik). ICU has no converter for it, so this one table comes from iconv-lite (pinned by package-lock.json), the library VS Code decodes files with; it must match Python's koi8_t and glibc's KOI8-T byte for byte (compared only, glibc's data isn't embedded)."
-    },
-    {
       "name": "gbk-0",
-      "icu_converter": "ibm-1386",
+      "encoding": "gbk",
       "plane": "raw2byte",
-      "comment": "GBK. The xlfd name looked up by other.c's mapping_gbk(). The raw byte pair is used directly as source (an OTHER charset, no notion of shift). stock luit had no xlfd data and was unmapped (confirmed by measurement under musl)."
+      "comment": "GBK, keyed on the raw bytes (other_ja.c)."
+    },
+    {
+      "name": "gb18030-2byte-0",
+      "encoding": "gb18030",
+      "plane": "raw2byte",
+      "comment": "GB18030's 1- and 2-byte part, keyed on the raw bytes (other_ja.c); the 4-byte part is gb18030_ranges.c."
     },
     {
       "name": "big5hkscs-0",
-      "icu_converter": "ibm-1375",
+      "encoding": "big5hkscs",
       "plane": "raw2byte",
-      "comment": "Big5-HKSCS. The xlfd name looked up by other.c's init_hkscs(). Like GBK, an OTHER charset with the raw byte pair as source."
+      "comment": "Big5-HKSCS, keyed on the raw bytes (other_ja.c)."
     },
     {
       "name": "big5.eten-0",
-      "icu_converter": "windows-950",
+      "encoding": "cp950",
       "plane": "raw2byte",
-      "comment": "Big5. Confirmed by measurement that charset.c's T_94192 (shift=0x8000) has n+shift matching the raw byte pair."
+      "comment": "Big5 as VS Code reads it (CP950), for the \"Big 5\" charset (T_94192, keyed on the raw 2 bytes)."
     },
     {
-      "name": "gb2312.1980-0",
-      "icu_converter": "ibm-1383",
-      "plane": "g1",
-      "comment": "GB2312. charset.c's T_9494 (shift=0) uses the GL scheme (high bit stripped), same as Japanese's jisx0208-2007-0. Confirmed by measurement (the raw-byte-pair approach mis-converted)."
+      "name": "cp949-0",
+      "encoding": "euckr",
+      "plane": "raw2byte",
+      "comment": "EUC-KR as VS Code reads it (CP949, i.e. EUC-KR plus Unified Hangul Code), keyed on the raw bytes (other_ja.c)."
     },
     {
-      "name": "ksc5601.1987-0",
-      "icu_converter": "ibm-970",
-      "plane": "g1",
-      "comment": "EUC-KR. Uses the GL scheme (T_9494, shift=0), same as GB2312."
+      "name": "gb2312-0",
+      "encoding": "gb2312",
+      "plane": "raw2byte",
+      "comment": "GB 2312 as VS Code reads it (iconv-lite's gb2312: GBK without its user-defined areas), keyed on the raw bytes (other_ja.c)."
     },
     {
-      "name": "ibm-cp865",
-      "icu_converter": "ibm-865",
+      "name": "cp852-direct-0",
+      "encoding": "cp852",
       "plane": "raw1byte",
-      "comment": "CP865 (Nordic DOS). Same reason and approach as CP852/857/1125. Reuses the existing \"CP 865\" charset row's xlfd as-is (no change needed to charset.c, just adding the table)."
+      "comment": "CP852."
     },
     {
-      "name": "microsoft-cp1250",
-      "icu_converter": "windows-1250",
+      "name": "cp857-direct-0",
+      "encoding": "cp857",
       "plane": "raw1byte",
-      "comment": "Windows-1250. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "CP857."
     },
     {
-      "name": "microsoft-cp1251",
-      "icu_converter": "windows-1251",
+      "name": "cp1125-direct-0",
+      "encoding": "cp1125",
       "plane": "raw1byte",
-      "comment": "Windows-1251. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "CP1125."
     },
     {
-      "name": "microsoft-cp1252",
-      "icu_converter": "windows-1252",
+      "name": "macroman-direct-0",
+      "encoding": "macroman",
       "plane": "raw1byte",
-      "comment": "Windows-1252. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "Mac Roman."
     },
     {
-      "name": "microsoft-cp1253",
-      "icu_converter": "windows-1253",
+      "name": "koi8t-direct-0",
+      "encoding": "koi8t",
       "plane": "raw1byte",
-      "comment": "Windows-1253. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
-    },
-    {
-      "name": "microsoft-cp1254",
-      "icu_converter": "windows-1254",
-      "plane": "raw1byte",
-      "comment": "Windows-1254. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
-    },
-    {
-      "name": "microsoft-cp1255",
-      "icu_converter": "windows-1255",
-      "plane": "raw1byte",
-      "comment": "Windows-1255. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
-    },
-    {
-      "name": "microsoft-cp1256",
-      "icu_converter": "windows-1256",
-      "plane": "raw1byte",
-      "comment": "Windows-1256. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
-    },
-    {
-      "name": "microsoft-cp1257",
-      "icu_converter": "windows-1257",
-      "plane": "raw1byte",
-      "comment": "Windows-1257. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
-    },
-    {
-      "name": "microsoft-cp1258",
-      "icu_converter": "windows-1258",
-      "plane": "raw1byte",
-      "comment": "Windows-1258. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
-    },
-    {
-      "name": "microsoft-cp874",
-      "icu_converter": "windows-874",
-      "plane": "raw1byte",
-      "comment": "Windows-874 (Thai). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "KOI8-T."
     },
     {
       "name": "ibm-cp437",
-      "icu_converter": "ibm-437",
+      "encoding": "cp437",
       "plane": "raw1byte",
-      "comment": "CP437 (DOS US). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "CP437."
     },
     {
       "name": "ibm-cp850",
-      "icu_converter": "ibm-850",
+      "encoding": "cp850",
       "plane": "raw1byte",
-      "comment": "CP850 (DOS Western Europe). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "CP850."
+    },
+    {
+      "name": "ibm-cp865",
+      "encoding": "cp865",
+      "plane": "raw1byte",
+      "comment": "CP865."
     },
     {
       "name": "ibm-cp866",
-      "icu_converter": "ibm-866",
+      "encoding": "cp866",
       "plane": "raw1byte",
-      "comment": "CP866 (DOS Cyrillic). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "CP866."
+    },
+    {
+      "name": "microsoft-cp1250",
+      "encoding": "windows1250",
+      "plane": "raw1byte",
+      "comment": "Windows-1250."
+    },
+    {
+      "name": "microsoft-cp1251",
+      "encoding": "windows1251",
+      "plane": "raw1byte",
+      "comment": "Windows-1251."
+    },
+    {
+      "name": "microsoft-cp1252",
+      "encoding": "windows1252",
+      "plane": "raw1byte",
+      "comment": "Windows-1252."
+    },
+    {
+      "name": "microsoft-cp1253",
+      "encoding": "windows1253",
+      "plane": "raw1byte",
+      "comment": "Windows-1253."
+    },
+    {
+      "name": "microsoft-cp1254",
+      "encoding": "windows1254",
+      "plane": "raw1byte",
+      "comment": "Windows-1254."
+    },
+    {
+      "name": "microsoft-cp1255",
+      "encoding": "windows1255",
+      "plane": "raw1byte",
+      "comment": "Windows-1255."
+    },
+    {
+      "name": "microsoft-cp1256",
+      "encoding": "windows1256",
+      "plane": "raw1byte",
+      "comment": "Windows-1256."
+    },
+    {
+      "name": "microsoft-cp1257",
+      "encoding": "windows1257",
+      "plane": "raw1byte",
+      "comment": "Windows-1257."
+    },
+    {
+      "name": "microsoft-cp1258",
+      "encoding": "windows1258",
+      "plane": "raw1byte",
+      "comment": "Windows-1258."
+    },
+    {
+      "name": "microsoft-cp874",
+      "encoding": "windows874",
+      "plane": "raw1byte",
+      "comment": "Windows-874."
+    },
+    {
+      "name": "iso8859-1",
+      "encoding": "iso88591",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-1."
+    },
+    {
+      "name": "iso8859-2",
+      "encoding": "iso88592",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-2."
+    },
+    {
+      "name": "iso8859-3",
+      "encoding": "iso88593",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-3."
+    },
+    {
+      "name": "iso8859-4",
+      "encoding": "iso88594",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-4."
+    },
+    {
+      "name": "iso8859-5",
+      "encoding": "iso88595",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-5."
+    },
+    {
+      "name": "iso8859-6",
+      "encoding": "iso88596",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-6."
+    },
+    {
+      "name": "iso8859-7",
+      "encoding": "iso88597",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-7."
+    },
+    {
+      "name": "iso8859-8",
+      "encoding": "iso88598",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-8."
+    },
+    {
+      "name": "iso8859-9",
+      "encoding": "iso88599",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-9."
+    },
+    {
+      "name": "iso8859-10",
+      "encoding": "iso885910",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-10."
     },
     {
       "name": "iso8859-11",
-      "icu_converter": "ISO-8859-11",
+      "encoding": "iso885911",
       "plane": "raw1byte",
-      "comment": "ISO 8859-11. Upstream's builtin.c has 8859-1 to -10 and -15 only; stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "ISO 8859-11."
     },
     {
       "name": "iso8859-13",
-      "icu_converter": "ISO-8859-13",
+      "encoding": "iso885913",
       "plane": "raw1byte",
-      "comment": "ISO 8859-13. Upstream's builtin.c has 8859-1 to -10 and -15 only; stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "ISO 8859-13."
     },
     {
       "name": "iso8859-14",
-      "icu_converter": "ISO-8859-14",
+      "encoding": "iso885914",
       "plane": "raw1byte",
-      "comment": "ISO 8859-14. Upstream's builtin.c has 8859-1 to -10 and -15 only; stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "ISO 8859-14."
+    },
+    {
+      "name": "iso8859-15",
+      "encoding": "iso885915",
+      "plane": "raw1byte",
+      "comment": "ISO 8859-15."
     },
     {
       "name": "iso8859-16",
-      "iconv_lite": "iso885916",
+      "encoding": "iso885916",
       "plane": "raw1byte",
-      "crosscheck": {
-        "python": "iso8859_16",
-        "glibc": "ISO-8859-16"
-      },
-      "comment": "ISO 8859-16. ICU has no converter for it, so like KOI8-T the table comes from iconv-lite and must match Python's and glibc's byte for byte. stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "comment": "ISO 8859-16."
     },
     {
-      "name": "jisx0201.1976-0",
-      "icu_converter": "euc-jp-2007",
-      "plane": "kana",
-      "comment": "JIS X 0201's half-width katakana (0xA1-0xDF), EUC-JP's G2 (SS2 0x8E). Only the GR half: none of the supported encodings uses JIS X 0201's GL half (JIS-Roman). stock luit had no table for it, so it came from iconv or X11's .enc files, which the fork no longer reads."
+      "name": "koi8-r",
+      "encoding": "koi8r",
+      "plane": "raw1byte",
+      "comment": "KOI8-R."
+    },
+    {
+      "name": "koi8-u",
+      "encoding": "koi8u",
+      "plane": "raw1byte",
+      "comment": "KOI8-U."
+    },
+    {
+      "name": "koi8-ru",
+      "encoding": "koi8ru",
+      "plane": "raw1byte",
+      "comment": "KOI8-RU."
     }
   ],
   "gb18030_4byte_ranges": {
-    "icu_converter": "GB18030",
-    "comment": "Extracts the BMP gaps as a linear range table. The supplementary planes are handled by a single formula (other_ja.c)."
+    "encoding": "gb18030",
+    "comment": "GB18030's 4-byte region for the BMP as linear-index ranges; the supplementary planes are one formula (other_ja.c)."
   }
 }

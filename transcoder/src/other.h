@@ -135,17 +135,21 @@ int init_gb18030x(OtherStatePtr);
 UINT mapping_gb18030x(UINT, OtherStatePtr);
 UINT reverse_gb18030x(UINT, OtherStatePtr);
 
-/* PATCH(fork, fallback): the fallback-policy-applying version for GBK /
- * Big5-HKSCS. upstream's mapping_gbk/mapping_hkscs hit luitMapCodeValue()'s
- * identity fallback as-is (silently
- * mis-converting an unmapped character into an unrelated one), so these are
- * replaced with versions that handle unmapped codes explicitly. stack reuses other.c's
- * stack_gbk/stack_hkscs, and since they use the same aux_gbk/aux_hkscs, no
- * new union member is needed.
+/* PATCH(fork, fallback): GBK, GB 2312, CP949 (EUC-KR) and Big5-HKSCS from
+ * the fork's tables, handling unmapped codes explicitly instead of
+ * upstream's identity fallback (see other_ja.c). stack reuses other.c's
+ * stack_gbk/stack_hkscs with aux_gbk/aux_hkscs, so no new union member is
+ * needed.
  */
 int init_gbkx(OtherStatePtr);
 UINT mapping_gbkx(UINT, OtherStatePtr);
 UINT reverse_gbkx(UINT, OtherStatePtr);
+int init_gb2312x(OtherStatePtr);
+UINT mapping_gb2312x(UINT, OtherStatePtr);
+UINT reverse_gb2312x(UINT, OtherStatePtr);
+int init_cp949(OtherStatePtr);
+UINT mapping_cp949(UINT, OtherStatePtr);
+UINT reverse_cp949(UINT, OtherStatePtr);
 
 int init_hkscsx(OtherStatePtr);
 UINT mapping_hkscsx(UINT, OtherStatePtr);
