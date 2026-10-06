@@ -22,10 +22,11 @@
 #define DECODE_ONLY(ucs) (BUILTIN_DECODE_ONLY | (ucs))
 
 /* *INDENT-OFF* */
-/* jisx0208-2007-0: iconv-lite eucjp plane=g1 entries=7337, +1 overrides (applied in array order, last wins)
+/* jisx0208-2007-0: iconv-lite eucjp plane=g1 entries=7337, the first 1 input-only (decoding takes the last row)
  * EUC-JP's G1 (JIS X 0208 with NEC and IBM extensions). Its own name keeps stock eucJP's jisx0208.1990-0 untouched. */
 static const BuiltInMapping tbl_jisx0208_2007_0[] =
 {
+    {0x2141, 0x301C},
     {0x2121, 0x3000},
     {0x2122, 0x3001},
     {0x2123, 0x3002},
@@ -7362,7 +7363,6 @@ static const BuiltInMapping tbl_jisx0208_2007_0[] =
     {0x7C7C, 0xFFE4},
     {0x7C7D, 0xFF07},
     {0x7C7E, 0xFF02},
-    {0x2141, 0x301C},
 };
 
 /* jisx0212.1990-0: iconv-lite eucjp plane=g3 entries=6067
@@ -13507,10 +13507,11 @@ static const BuiltInMapping tbl_jisx0201_1976_0[] =
     {0x00DF, 0xFF9F},
 };
 
-/* cp932-direct-0: iconv-lite shiftjis plane=raw2byte entries=9482, +1 overrides (applied in array order, last wins)
+/* cp932-direct-0: iconv-lite shiftjis plane=raw2byte entries=9482, the first 1 input-only (decoding takes the last row)
  * Shift JIS as VS Code reads it (CP932), keyed on the raw bytes (other_ja.c): SJIS's coordinate formula can't handle the IBM extension rows. */
 static const BuiltInMapping tbl_cp932_direct_0[] =
 {
+    {0x8160, 0x301C},
     {0x0080, 0x0080},
     {0x00A1, 0xFF61},
     {0x00A2, 0xFF62},
@@ -22992,7 +22993,6 @@ static const BuiltInMapping tbl_cp932_direct_0[] =
     {0xFC49, 0xFA2D},
     {0xFC4A, 0x9E19},
     {0xFC4B, 0x9ED1},
-    {0x8160, 0x301C},
 };
 
 /* gbk-0: iconv-lite gbk plane=raw2byte entries=23941

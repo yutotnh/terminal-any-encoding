@@ -133,9 +133,10 @@ Works for bash, zsh, fish and pwsh, as in VS Code's own terminals.
 - **Output of other task types and of debug sessions isn't converted.**
   For a task, use the [`terminalAnyEncoding` type](#tasks).
   Debugging has no equivalent.
-- **The wave dash looks different from VS Code's editor.**
-  The editor shows Shift JIS `81 60` and EUC-JP `A1 C1` as a fullwidth tilde (U+FF5E); this extension shows a wave dash (U+301C).
-  Either can be typed.
+- **Typed `～` and `№` in EUC-JP become different bytes than when VS Code's editor saves them.**
+  They're sent as `A1 C1` and `AD E2`, the bytes they're shown from, as the wave-dash-unify extension saves them.
+  The editor alone saves `8F A2 B7` and `8F A2 F1`, which other tools can't read.
+  `〜` (U+301C) is sent as the wave dash too, `A1 C1` in EUC-JP and `81 60` in Shift JIS.
 
 ## Contributing
 

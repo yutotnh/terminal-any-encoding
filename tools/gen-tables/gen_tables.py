@@ -203,9 +203,9 @@ def render_builtin_ja_c(tables: dict[str, list[tuple[int, int]]], meta: list[dic
     for m in meta:
         ident = c_identifier(m["name"])
         rows = tables[m["name"]]
-        n_override = len(m.get("overrides", []))
-        override_note = f", +{n_override} overrides (applied in array order, last wins)" if n_override else ""
-        lines.append(f"/* {m['name']}: iconv-lite {m['encoding']} plane={m['plane']} entries={len(rows)}{override_note}")
+        n_alias = len(m.get("input_aliases", []))
+        alias_note = f", the first {n_alias} input-only (decoding takes the last row)" if n_alias else ""
+        lines.append(f"/* {m['name']}: iconv-lite {m['encoding']} plane={m['plane']} entries={len(rows)}{alias_note}")
         lines.append(f" * {m['comment']} */")
         lines.append(f"static const BuiltInMapping {ident}[] =")
         lines.append("{")
@@ -284,16 +284,16 @@ def build() -> tuple[str, dict[str, str], str]:
     tables: dict[str, list[tuple[int, int]]] = {}
     for m in decl["tables"]:
         rows = sorted(gen_rows(m["encoding"], m["plane"]))
-        # Override rows go "after" the base rows. initializeBuiltInTable()
-        # (luitconv.c) processes the array in order, and decoding
-        # (table_utf8[source]) has "the last entry with the same source
-        # wins", so the override decides what's displayed; whether a row
-        # encodes is decided like for any other row (mark_decode_only).
-        # See docs/transcoder-design.md for details.
-        overrides = [(int(o["source"], 16), int(o["target"], 16)) for o in m.get("overrides", [])]
-        rows = mark_decode_only(m["encoding"], m["plane"], rows + overrides, corrections.get(m["encoding"], {}))
+        # Input aliases go "before" the base rows. initializeBuiltInTable()
+        # (luitconv.c) processes the array in order and decoding
+        # (table_utf8[source]) takes the last row with a source, so the base
+        # row still decides what's displayed, while every row lands in the
+        # reverse index: the alias only adds a character that's sent as those
+        # bytes (if mark_decode_only lets it). See docs/transcoder-design.md.
+        aliases = [(int(a["source"], 16), int(a["target"], 16)) for a in m.get("input_aliases", [])]
+        rows = mark_decode_only(m["encoding"], m["plane"], aliases + rows, corrections.get(m["encoding"], {}))
         tables[m["name"]] = rows
-        extra = f" (+{len(overrides)} overrides)" if overrides else ""
+        extra = f" (+{len(aliases)} input aliases)" if aliases else ""
         print(f"  {m['name']:20s} ({m['encoding']}, {m['plane']:8s}) -> {len(rows)} entries{extra}", file=sys.stderr)
 
     source = render_builtin_ja_c(tables, decl["tables"], version)

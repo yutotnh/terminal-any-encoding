@@ -13,15 +13,14 @@ For each supported encoding (src/encodings.ts):
 The editor's side comes from iconv-lite, the library VS Code decodes files
 with (tests/iconv_lite_oracle.js). The only intended differences:
 
-- The wave dash (EUC-JP 0xA1C1, Shift JIS 0x8160) decodes to U+301C 〜, not
-  the editor's U+FF5E ～.
 - Typed text must come back as the bytes it was displayed from. iconv-lite's
   EUC-JP encoder doesn't do that for two characters (VS Code issue #48802,
   iconv-lite #145; what the wave-dash-unify extension corrects on save):
   ～ U+FF5E goes to 0xA1C1, not 0x8FA2B7, and № U+2116 to 0xADE2, not
   0x8FA2F1. With that, every EUC-JP character with several byte sequences
   is sent as glibc's EUC-JP-MS sends it. 〜 U+301C, which iconv-lite can't
-  encode at all, is sent as the wave dash too.
+  encode at all (macOS's input methods type it), is sent as the wave dash,
+  EUC-JP 0xA1C1 or Shift JIS 0x8160, too.
 - C1 controls (U+0080-U+009F) aren't compared: in ISO 8859 terminals they
   are control characters, not text.
 - GB18030's 4-byte sequences between the BMP's and the supplementary planes'
@@ -58,10 +57,7 @@ LUIT = REPO / "transcoder" / "src" / "luit"
 ORACLE = REPO / "tests" / "iconv_lite_oracle.js"
 
 # encoding id -> {bytes (hex): code point} decoded on purpose unlike the editor
-DECODE_EXCEPTIONS = {
-    "eucjp": {"a1c1": 0x301C},
-    "shiftjis": {"8160": 0x301C},
-}
+DECODE_EXCEPTIONS: dict[str, dict[str, int]] = {}
 # encoding id -> {code point: bytes (hex)} typed on purpose unlike the editor
 ENCODE_EXCEPTIONS = {
     "eucjp": {0x301C: "a1c1", 0xFF5E: "a1c1", 0x2116: "ade2"},

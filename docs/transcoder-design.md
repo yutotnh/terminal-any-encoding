@@ -64,16 +64,17 @@ decodes as one character (1-, 2-, 3- and GB18030's 4-byte ones) and types
 every character the editor can save, through a real PTY, for every encoding,
 and compares with iconv-lite. The intended differences, and only those:
 
-- **The wave dash**: EUC-JP `0xA1C1` and Shift JIS `0x8160` show U+301C 〜
-  (an override row, below), what JIS X 0208 means there and what glibc's
-  EUC-JP and Shift_JIS decode it to, not the editor's U+FF5E ～.
 - **Typed text comes back as the bytes it was shown from.** iconv-lite's
   EUC-JP encoder doesn't do that for two characters: ～ U+FF5E (shown from
   `0xA1C1`) is saved as `0x8FA2B7`, and № U+2116 (from `0xADE2`) as
   `0x8FA2F1`, which other tools can't read (VS Code issue #48802, iconv-lite
   #145; the wave-dash-unify extension corrects it on save). They're sent as
-  `0xA1C1` and `0xADE2` (`encode_corrections` in `converters.json`), and
-  U+301C, which iconv-lite can't encode, as the wave dash.
+  `0xA1C1` and `0xADE2` (`encode_corrections` in `converters.json`). 〜
+  U+301C, which iconv-lite can't encode at all, is sent as the wave dash,
+  EUC-JP `0xA1C1` or Shift JIS `0x8160` (an input alias, below): macOS's input
+  methods type the wave dash as U+301C, Windows' as U+FF5E, and the editor
+  shows those bytes as U+FF5E. So the terminal behaves like the editor with
+  wave-dash-unify installed.
 - **C1 controls** (U+0080-U+009F) aren't compared: in ISO 8859 terminals
   `0x8E`/`0x8F`/`0x9B` are SS2/SS3/CSI, not text.
 - **GB18030's unassigned 4-byte ranges** (linear index 39420-188999, and past
@@ -163,16 +164,17 @@ happened once and had to be reverted). Instead, the design is:
 Stock upstream charsets (ones the fork hasn't replaced the tables for) are
 out of scope for this policy and keep their old identity-fallback behavior.
 
-## Override mechanism for differential entries like the wave dash
+## Input aliases: a character that's only typed
 
 In `initializeBuiltInTable()`'s implementation, when multiple entries share
-the same `source`, the **decode direction** (`table_utf8[j]`) is won
-(overwritten) by whichever entry is processed last in the array. Each table
-in `converters.json` can have an `overrides` array, and `gen_tables.py`
-appends the override rows after the base rows, so they decide what's
-displayed: EUC `A1C1` → U+301C (wave dash) for `jisx0208-2007-0`. luit
-itself is untouched. Whether a row is used for encoding is decided like for
-any other row (next section).
+the same `source`, the **decode direction** (`table_utf8[j]`) is won by
+whichever entry is processed last in the array, while every entry can land
+in the reverse index. Each table in `converters.json` can have an
+`input_aliases` array, and `gen_tables.py` puts those rows before the base
+rows: the base row still decides what's displayed, and the alias only adds a
+character that's sent as those bytes, e.g. U+301C → EUC `A1C1` in
+`jisx0208-2007-0`. luit itself is untouched. Whether a row is used for
+encoding is decided like for any other row (next section).
 
 ## Which bytes a character is sent as
 

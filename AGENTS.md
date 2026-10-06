@@ -24,9 +24,9 @@ top of that:
   updated hash fails CI.
 - `tests/test_editor_parity.py` checks every byte sequence and every
   character of every encoding against iconv-lite. Its few intended
-  differences (the wave dash, EUC-JP's ～ and № when typed, C1 controls,
-  GB18030's unassigned 4-byte ranges) are listed at its top; anything else
-  that differs is a bug.
+  differences (what typed ～, № and 〜 are sent as, C1 controls, GB18030's
+  unassigned 4-byte ranges) are listed at its top; anything else that
+  differs is a bug.
 - Dependabot does not track luit's upstream (it's C code).
   `.github/workflows/upstream-watch.yml` checks weekly and files an issue.
   The fork's changes are the diff between `transcoder/vendor/luit-upstream/`

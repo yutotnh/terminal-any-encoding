@@ -9,7 +9,7 @@
     "shiftjis": {
       "U+301C": "8160"
     },
-    "$comment": "iconv-lite saves EUC-JP's ～ (decoded from 0xA1C1) as 0x8FA2B7 and № (from 0xADE2) as 0x8FA2F1, which other tools can't read (VS Code issue #48802, iconv-lite #145; the wave-dash-unify extension corrects it on save). With these, every EUC-JP character with several byte sequences is sent as glibc's EUC-JP-MS sends it. U+301C, which iconv-lite can't encode, is the wave dash."
+    "$comment": "What a character is sent as where iconv-lite's own choice doesn't give back the bytes it was displayed from. iconv-lite saves EUC-JP's ～ (displayed from 0xA1C1) as 0x8FA2B7 and № (from 0xADE2) as 0x8FA2F1, which other tools can't read (VS Code issue #48802, iconv-lite #145): what the wave-dash-unify extension corrects on save. With these, every EUC-JP character with several byte sequences is sent as glibc's EUC-JP-MS sends it. U+301C (input_aliases) is the wave dash."
   },
   "tables": [
     {
@@ -17,11 +17,11 @@
       "encoding": "eucjp",
       "plane": "g1",
       "comment": "EUC-JP's G1 (JIS X 0208 with NEC and IBM extensions). Its own name keeps stock eucJP's jisx0208.1990-0 untouched.",
-      "overrides": [
+      "input_aliases": [
         {
           "source": "0x2141",
           "target": "0x301C",
-          "comment": "Wave dash (U+301C) for display, not the editor's U+FF5E: what JIS X 0208 means there, and what glibc's EUC-JP and Shift_JIS decode it to."
+          "comment": "〜 U+301C, which iconv-lite can't encode (macOS's input methods type it), is sent as the wave dash too; displayed is still the editor's ～ U+FF5E."
         }
       ]
     },
@@ -42,11 +42,11 @@
       "encoding": "shiftjis",
       "plane": "raw2byte",
       "comment": "Shift JIS as VS Code reads it (CP932), keyed on the raw bytes (other_ja.c): SJIS's coordinate formula can't handle the IBM extension rows.",
-      "overrides": [
+      "input_aliases": [
         {
           "source": "0x8160",
           "target": "0x301C",
-          "comment": "Wave dash (U+301C) for display, not the editor's U+FF5E: what JIS X 0208 means there, and what glibc's EUC-JP and Shift_JIS decode it to."
+          "comment": "〜 U+301C, which iconv-lite can't encode (macOS's input methods type it), is sent as the wave dash too; displayed is still the editor's ～ U+FF5E."
         }
       ]
     },

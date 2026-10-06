@@ -33,11 +33,11 @@ OUTPUT_CASES = [
     ("euc-jp-2007", "fce2", 0x9AD9, "髙 (G1)"),
     ("euc-jp-2007", "8fecbf", 0x9DD7, "鷗 (G3/SS3, JIS X 0212)"),
     ("euc-jp-2007", "ada1", 0x2460, "① (G1, NEC special character)"),
-    ("euc-jp-2007", "a1c1", 0x301C, "wave dash position (override: U+301C)"),
+    ("euc-jp-2007", "a1c1", 0xFF5E, "wave dash position, shown as VS Code shows it (U+FF5E)"),
     ("euc-jp-2007", "c6fccbdc", None, "日本 (basic JIS X0208; string comparison done separately)"),
     ("CP932", "fbfc", 0x9AD9, "髙 (direct lookup)"),
     ("CP932", "8740", 0x2460, "① (NEC special character)"),
-    ("CP932", "8160", 0x301C, "wave dash position (override: U+301C)"),
+    ("CP932", "8160", 0xFF5E, "wave dash position, shown as VS Code shows it (U+FF5E)"),
     ("CP932", "b1", 0xFF71, "half-width katakana ｱ"),
     ("CP932", "5c", 0x005C, "backslash (ASCII, as in Windows/WHATWG, not JIS X 0201's yen sign)"),
     ("CP932", "7e", 0x007E, "tilde (ASCII, not JIS X 0201's overline)"),
@@ -53,29 +53,8 @@ INPUT_ROUNDTRIP_CASES = [
     ("CP932", "日本", "93fa967b"),
 ]
 
-# U+301C has no encode-direction mapping in the euc-jp-2007/CP932 base
-# tables, but the override row also takes effect on the encode direction
-# (an asymmetric mapping), so it doesn't vanish. No case is left where input
-# silently drops, so this is empty.
+# No case is left where input silently drops, so this is empty.
 INPUT_DROP_CASES: list[tuple[str, str, str]] = []
-
-# Verifies, via a real PTY round-trip, that inputting either the wave
-# dash (U+301C) or the fullwidth tilde (U+FF5E) converges to the same byte
-# sequence (source).
-#
-# Why the round-trip method is valid: in both the euc-jp-2007 and
-# cp932-direct-0 tables, there is exactly one entry that decodes to U+301C
-# — the override row (it doesn't exist in the base table at all; confirmed
-# via grep when running tools/gen-tables/gen_tables.py). So if
-# "input -> encode -> child process -> decode -> round-trip read" returns
-# exactly U+301C as a single character, the intermediate byte sequence can
-# only be the override's source (EUC: A1C1 / SJIS: 8160).
-WAVE_DASH_CONVERGENCE_CASES = [
-    ("euc-jp-2007", "〜", "〜 dash (U+301C)"),
-    ("euc-jp-2007", "～", "～ fullwidth tilde (U+FF5E)"),
-    ("CP932", "〜", "〜 dash (U+301C)"),
-    ("CP932", "～", "～ fullwidth tilde (U+FF5E)"),
-]
 
 # Fallback policy when conversion isn't possible.
 # Output direction: undecodable bytes become U+FFFD.
@@ -195,6 +174,11 @@ INPUT_CANONICAL_BYTES_CASES = [
     ("euc-jp-2007", "￢∵", "a2cca2e8", "euc-jp-2007 duplicates encode like VS Code"),
     ("BIG5-HKSCS", "═", "f9f9", "Big5-HKSCS duplicated box drawing (0xA2A4/0xF9F9) encodes like VS Code"),
     ("KOI8-T", "қӯя", "80a1d1", "KOI8-T encodes through its table"),
+    # The wave dash: 〜 (macOS's input methods) and ～ (Windows') are both
+    # sent as the bytes shown as ～, and so is № in EUC-JP (as the
+    # wave-dash-unify extension saves them; not iconv-lite's 0x8FA2B7/0x8FA2F1)
+    ("euc-jp-2007", "〜～№", "a1c1a1c1ade2", "EUC-JP wave dash, fullwidth tilde and numero sign"),
+    ("CP932", "〜～", "81608160", "Shift JIS wave dash and fullwidth tilde"),
     ("CP932", "\\¥~‾", "5c5c7e7e", "CP932 backslash/yen and tilde/overline both encode to 0x5C/0x7E (WHATWG)"),
 ]
 
@@ -203,8 +187,8 @@ INPUT_CANONICAL_BYTES_CASES = [
 FALLBACK_REGRESSION_CASES = [
     ("euc-jp-2007", "Hello, World!", "Hello, World!", "multiple ASCII characters"),
     ("CP932", "Hello, World!", "Hello, World!", "ASCII works under CP932 too"),
-    ("euc-jp-2007", "髙鷗①〜", "髙鷗①〜", "known Japanese characters"),
-    ("CP932", "髙①〜", "髙①〜", "known CP932 characters"),
+    ("euc-jp-2007", "髙鷗①〜", "髙鷗①～", "known Japanese characters (〜 comes back as ～, how 0xA1C1 is shown)"),
+    ("CP932", "髙①〜", "髙①～", "known CP932 characters (〜 comes back as ～, how 0x8160 is shown)"),
     # The 3 encodings whose implementation the fork replaced. Patching the
     # shared functions once broke ASCII, so ASCII passthrough is always
     # verified.
@@ -330,47 +314,6 @@ def run_drop_case(enc: str, text: str, reason: str) -> tuple[bool, str]:
     if out == b"":
         return True, f"silently vanished as expected ({reason})"
     return False, f"expected it to vanish but received: {out!r}"
-
-
-def run_wave_dash_case(enc: str, text: str, label: str) -> tuple[bool, str]:
-    """Verifies that regardless of which character was input, it always becomes U+301C after the round trip (i.e. converges to the same byte sequence)."""
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8"])
-        os._exit(1)
-    attrs = termios.tcgetattr(fd)
-    attrs[3] = attrs[3] & ~termios.ECHO
-    termios.tcsetattr(fd, termios.TCSANOW, attrs)
-    time.sleep(0.4)
-    os.write(fd, text.encode("utf-8"))
-    out = b""
-    end = time.time() + 1.5
-    while time.time() < end:
-        r, _, _ = select.select([fd], [], [], 0.3)
-        if not r:
-            continue
-        try:
-            d = os.read(fd, 4096)
-        except OSError:
-            break
-        if not d:
-            break
-        out += d
-    try:
-        os.close(fd)
-    except OSError:
-        pass
-    try:
-        os.waitpid(pid, 0)
-    except Exception:
-        pass
-    try:
-        got_text = out.decode("utf-8")
-    except UnicodeDecodeError:
-        return False, f"invalid UTF-8: {out!r}"
-    if got_text != "〜":
-        return False, f"after round trip {got_text!r} != U+301C (didn't converge)"
-    return True, f"input ({label}) -> converged to U+301C after round trip (intermediate byte sequence is determined by the override's source)"
 
 
 def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect_cp: int | None) -> tuple[bool, str]:
@@ -911,15 +854,6 @@ def main() -> int:
             print(f"{mark}[{enc}] {text!r} -> {detail}")
             if not ok:
                 failures += 1
-
-    print("\n== Input direction (wave dash / fullwidth tilde convergence check) ==")
-    for enc, text, label in WAVE_DASH_CONVERGENCE_CASES:
-        total += 1
-        ok, detail = run_wave_dash_case(enc, text, label)
-        mark = "OK " if ok else "NG "
-        print(f"{mark}[{enc}] {text!r} -> {detail}")
-        if not ok:
-            failures += 1
 
     print("\n== Chinese, Korean, and single-byte encodings (incl. GB18030 4-byte) ==")
     for enc, hexin, expect_cp, desc in MORE_OUTPUT_CASES:
