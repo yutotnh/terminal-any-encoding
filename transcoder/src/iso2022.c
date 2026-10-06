@@ -239,6 +239,7 @@ allocIso2022(void)
     is->buffered_count = 0;
 
     is->buffered_ku = -1;
+    is->other_pending_count = 0;
 
     is->outbuf = malloc((size_t) BUFFER_SIZE);
     if (!is->outbuf) {
@@ -422,7 +423,9 @@ fromUtf8(unsigned char *b)
 		((b[1] & 0x3F) << 6) |
 		((b[2] & 0x3F)));
     else if ((b[0] & 0x78) == 0x70)
-	return (((b[0] & 0x03) << 18) |
+	/* PATCH(fork, utf-8): a 4-byte lead carries 3 bits; upstream masked
+	 * 2, so U+100000-U+10FFFF (lead 0xF4) became U+0000-U+FFFF. */
+	return (((b[0] & 0x07) << 18) |
 		((b[1] & 0x3F) << 12) |
 		((b[2] & 0x3F) << 6) |
 		((b[3] & 0x3F)));
@@ -437,6 +440,61 @@ static const unsigned char PASTE_START[] = "\033[200~";
 static const unsigned char PASTE_END[] = "\033[201~";
 #define PASTE_MARKER_LEN 6
 static int paste_open = 0;
+
+/* PATCH(fork, input backpressure): converted input waiting for the pty.
+ * Writes to it are non-blocking, and upstream ignored a short write, so
+ * whatever didn't fit (the program wasn't reading fast enough, or the pty's
+ * buffer is small, as on macOS) was lost. luit now keeps the rest and
+ * doesn't read more input until it's gone (see parent() in luit.c), while
+ * still reading the program's output, so neither side can deadlock. One
+ * chunk's conversion always fits. */
+static unsigned char input_pending[BUFFER_SIZE * 4 + 16 + 6];
+static size_t input_pending_len = 0;
+
+static void
+queueInput(const unsigned char *p, size_t n)
+{
+    memcpy(input_pending + input_pending_len, p, n);
+    input_pending_len += n;
+}
+
+int
+inputPending(void)
+{
+    return input_pending_len > 0;
+}
+
+/* Writes as much held-back input as fd takes now; with block, waits until
+ * all of it is written. Returns -1 if fd can't be written to any more. */
+int
+flushInput(int fd, int block)
+{
+    size_t done = 0;
+    int rc = 0;
+
+    while (done < input_pending_len) {
+	ssize_t n = write(fd, input_pending + done, input_pending_len - done);
+	if (n > 0) {
+	    done += (size_t) n;
+	} else if (n < 0 && errno == EINTR) {
+	    continue;
+	} else if (n < 0 && errno == EAGAIN && block) {
+	    if (waitForOutput(fd) == IO_Closed) {
+		rc = -1;
+		break;
+	    }
+	} else {
+	    if (!(n < 0 && errno == EAGAIN))
+		rc = -1;
+	    break;
+	}
+    }
+    if (rc < 0)
+	done = input_pending_len;	/* nothing will take it */
+    memmove(input_pending, input_pending + done, input_pending_len - done);
+    input_pending_len -= done;
+    return rc;
+}
 
 static const unsigned char *
 findBytes(const unsigned char *hay, size_t n, const unsigned char *needle, size_t m)
@@ -464,7 +522,7 @@ trackPaste(const unsigned char *buf, size_t n)
 
 /*
  * PATCH(fork, input rejection): converts one chunk of keyboard input
- * (UTF-8) and writes it to fd -- or, if any character in it can't be
+ * (UTF-8) and queues it for fd (flushInput()) -- or, if any character in it can't be
  * encoded, writes none of it and returns 1. Substituting or dropping just
  * that character would change what the shell runs (`rm <emoji>*` became
  * `rm ?*` / `rm *`); the caller rings the bell instead. `discard` drops the
@@ -480,7 +538,9 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
     unsigned char out[BUFFER_SIZE * 4 + 16];
     size_t outlen = 0;
 
+    (void) fd;			/* written to by flushInput() */
     assert(count <= BUFFER_SIZE);
+    assert(input_pending_len == 0);
     input_unencodable = 0;
 
     c = buf;
@@ -719,7 +779,11 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		i = G2(is)->reverse(ucode, G2(is));
 		if (i >= 0) {
 		    int wrote = 0;
-		    switch (GR(is)->type) {
+		    /* PATCH(fork, single shifts): upstream switched on GR's type
+		     * here and below, so a G2/G3 set of another size than GR (EUC-JP's
+		     * 1-byte JIS X 0201 katakana in G2, next to 2-byte JIS X 0208 in
+		     * GR) was never written: typed half-width katakana was dropped. */
+		    switch (G2(is)->type) {
 		    case T_94:
 		    case T_96:
 		    case T_128:
@@ -762,7 +826,7 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		i = G3(is)->reverse(ucode, G3(is));
 		if (i >= 0) {
 		    int wrote = 0;
-		    switch (GR(is)->type) {
+		    switch (G3(is)->type) {
 		    case T_94:
 		    case T_96:
 		    case T_128:
@@ -846,18 +910,63 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 
     if (discard || input_unencodable) {
 	if (paste_open && findBytes(buf, (size_t) count, PASTE_END, PASTE_MARKER_LEN)) {
-	    IGNORE_RC(write(fd, PASTE_END, (size_t) PASTE_MARKER_LEN));
+	    queueInput(PASTE_END, (size_t) PASTE_MARKER_LEN);
 	    paste_open = 0;
 	}
 	return input_unencodable;
     }
     trackPaste(buf, (size_t) count);
     if (outlen > 0)
-	IGNORE_RC(write(fd, out, outlen));
+	queueInput(out, outlen);
     return 0;
 }
 
 #define PAIR(a,b) ((unsigned) ((a) << 8) | (b))
+
+/*
+ * PATCH(fork, invalid sequences): decodes one byte with OTHER's stack
+ * function. Like VS Code's editor (iconv-lite), bytes that can't make a
+ * character show U+FFFD for their first byte, and decoding goes on from the
+ * second; upstream dropped them silently. Returns 0 if the byte has to be
+ * read again (after the bytes before it).
+ */
+static int
+otherByte(Iso2022Ptr is, int fd, unsigned char b)
+{
+    const CharsetRec *other = OTHER(is);
+    int c = other->other_stack(b, other->other_aux);
+    unsigned count = is->other_pending_count + 1;
+    unsigned char rest[sizeof(is->other_pending)];
+    unsigned i;
+
+    if (c == -1) {
+	if (is->other_pending_count < sizeof(is->other_pending))
+	    is->other_pending[is->other_pending_count++] = b;
+	return 1;
+    }
+    if (c != OTHER_INVALID) {
+	unsigned ucode = other->other_recode((unsigned) c, other->other_aux);
+	/* An unmapped 4-byte GB18030 sequence stays one U+FFFD, as in the
+	 * WHATWG Encoding Standard: every one of them is well-formed. */
+	if (ucode != 0xFFFD || count == 1 || count == 4) {
+	    outbufUTF8(is, fd, ucode);
+	    is->other_pending_count = 0;
+	    return 1;
+	}
+    }
+    outbufUTF8(is, fd, 0xFFFD);
+    if (count == 1)
+	return 1;
+    count -= 2;
+    memcpy(rest, is->other_pending + 1, count);
+    is->other_pending_count = 0;
+    for (i = 0; i < count; i++) {
+	while (!otherByte(is, fd, rest[i])) {
+	    /* read rest[i] again */
+	}
+    }
+    return 0;
+}
 
 void
 copyOut(Iso2022Ptr is, int fd, unsigned char *buf, unsigned count)
@@ -872,21 +981,16 @@ copyOut(Iso2022Ptr is, int fd, unsigned char *buf, unsigned count)
 	case P_NORMAL:
 	  resynch:
 	    if (is->buffered_ku < 0) {
-		if (*s == ESC) {
+		if (*s == ESC && is->other_pending_count == 0) {
 		    buffer(is, *s++);
 		    is->parserState = P_ESC;
 		} else if (OTHER(is) != NULL
 			   && OTHER(is)->other_recode != NULL
 			   && OTHER(is)->other_stack != NULL
 			   && OTHER(is)->other_aux != NULL) {
-		    int c = OTHER(is)->other_stack(*s, OTHER(is)->other_aux);
-		    if (c >= 0) {
-			unsigned ucode = (unsigned) c;
-			outbufUTF8(is, fd,
-				   OTHER(is)->other_recode(ucode, OTHER(is)->other_aux));
-			is->shiftState = S_NORMAL;
-		    }
-		    s++;
+		    if (otherByte(is, fd, *s))
+			s++;
+		    is->shiftState = S_NORMAL;
 		} else if (*s == CSI && CHARSET_REGULAR(GR(is))) {
 		    buffer(is, *s++);
 		    is->parserState = P_CSI;

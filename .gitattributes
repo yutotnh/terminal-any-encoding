@@ -2,14 +2,13 @@
 #
 # transcoder/ (the luit fork) commits generated tables (builtin_ja.c etc.),
 # and tools/gen-tables/gen_tables.py --check cross-checks their byte-content
-# hash against what ICU generates. If they get mangled into CRLF the
+# hash against what gets generated. If they get mangled into CRLF the
 # hash stops matching, so eol=lf here isn't just formatting — it's a
 # precondition for that check.
 * text=auto eol=lf
 
-# Conversion tables regenerated from ICU. Marks them as never hand-edited, visibly in diffs too.
+# Generated conversion tables. Marks them as never hand-edited, visibly in diffs too.
 transcoder/src/builtin_ja.c linguist-generated=true
-transcoder/src/other_ja.c linguist-generated=true
 transcoder/src/gb18030_ranges.c linguist-generated=true
 
 *.png binary

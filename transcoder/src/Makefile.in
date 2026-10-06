@@ -74,9 +74,11 @@ MANDIR		= $(DESTDIR)$(mandir)
 
 INSTALL_DIRS    = $(BINDIR) $(MANDIR)
 
-SRCS		= luit.c iso2022.c charset.c parser.c sys.c other.c fontenc.c @EXTRASRCS@
-OBJS		= luit$o iso2022$o charset$o parser$o sys$o other$o fontenc$o @EXTRAOBJS@
-HDRS		= charset.h config.h iso2022.h luit.h luitconv.h other.h parser.h sys.h
+# PATCH(fork, build): the fork's own sources (generated tables, CP932/GBK/
+# Big5-HKSCS/GB18030 charsets) are part of every build.
+SRCS		= luit.c iso2022.c charset.c parser.c sys.c other.c fontenc.c @EXTRASRCS@ builtin_ja.c other_ja.c gb18030_ranges.c
+OBJS		= luit$o iso2022$o charset$o parser$o sys$o other$o fontenc$o @EXTRAOBJS@ builtin_ja$o other_ja$o gb18030_ranges$o
+HDRS		= charset.h config.h iso2022.h luit.h luitconv.h other.h parser.h sys.h gb18030_ranges.h
 
        PROGRAMS = luit$x
 

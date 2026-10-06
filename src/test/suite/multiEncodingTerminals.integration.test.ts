@@ -2,30 +2,9 @@ import * as assert from "node:assert";
 import * as vscode from "vscode";
 import { ENCODINGS, EncodingDefinition } from "../../encodings";
 import type { TestExports } from "../../extension";
+import { waitFor } from "./waitFor";
 
 const EXTENSION_ID = "yutotnh.terminal-any-encoding";
-
-function waitFor(
-  predicate: () => boolean,
-  timeoutMs: number,
-  intervalMs = 200,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = () => {
-      if (predicate()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error("Timed out: condition was never satisfied"));
-        return;
-      }
-      setTimeout(tick, intervalMs);
-    };
-    tick();
-  });
-}
 
 /**
  * Opens 3 tabs simultaneously with different encodings (eucjp / shiftjis /
@@ -44,19 +23,23 @@ suite("open terminals with multiple encodings simultaneously", function () {
       command: string;
       expect: string;
     }[] = [
+      // The command is ASCII and prints the encoded bytes itself, so the
+      // shell's line editing, which depends on a locale CP932 doesn't even
+      // have, stays out of it (input conversion is tested in
+      // tests/test_encodings.py).
       {
         encoding: ENCODINGS.find((e) => e.id === "eucjp")!,
-        command: "echo 日本語EUC髙鷗",
+        command: String.raw`printf '\306\374\313\334\270\354EUC\374\342\217\354\277\n'`,
         expect: "日本語EUC髙鷗",
       },
       {
         encoding: ENCODINGS.find((e) => e.id === "shiftjis")!,
-        command: "echo 日本語CP932髙",
+        command: String.raw`printf '\223\372\226\173\214\352CP932\373\374\n'`,
         expect: "日本語CP932髙",
       },
       {
         encoding: ENCODINGS.find((e) => e.id === "gbk")!,
-        command: "echo 简体中文GBK",
+        command: String.raw`printf '\274\362\314\345\326\320\316\304GBK\n'`,
         expect: "简体中文GBK",
       },
     ];
@@ -94,7 +77,9 @@ suite("open terminals with multiple encodings simultaneously", function () {
         terminals[i].sendText(targets[i].command, true);
       }
 
-      // Wait for each expected string to appear, independently
+      // Wait for each expected string to appear, independently. On a
+      // timeout, fall through: the checks below say which terminal is
+      // missing it and show what it printed.
       await waitFor(
         () =>
           targets.every((t, i) =>

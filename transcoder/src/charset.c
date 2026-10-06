@@ -90,12 +90,6 @@ static FontencCharsetRec fontencCharsets[] =
     {"KSC 5601",       T_9494,  'C', "ksc5601.1987-0",   0x0000, NULL, NULL},
     {"JIS X 0212",     T_9494,  'D', "jisx0212.1990-0",  0x0000, NULL, NULL},
 
-    /* PATCH(fork, euc-jp-2007): WHATWG/ICU "euc-jp-2007" G1 plane. A superset of
-     * stock "JIS X 0208" above (NEC row 13 + IBM extension rows added), so it
-     * gets a distinct xlfd name rather than overwriting the stock table -
-     * existing eucJP/SJIS behaviour is unaffected. See builtin_ja.c. */
-    {"JIS X 0208 (2007)", T_9494, 'Q', "jisx0208-2007-0", 0x0000, NULL, NULL},
-
     {"GB 2312",        T_9696,  'A', "gb2312.1980-0",    0x0000, NULL, NULL},
     {"JIS X 0208",     T_9696,  'B', "jisx0208.1990-0",  0x0000, NULL, NULL},
     {"KSC 5601",       T_9696,  'C', "ksc5601.1987-0",   0x0000, NULL, NULL},
@@ -113,19 +107,26 @@ static FontencCharsetRec fontencCharsets[] =
     {"CP 1251",        T_128,   0,   "microsoft-cp1251", 0x80,   NULL, NULL},
     {"CP 1252",        T_128,   0,   "microsoft-cp1252", 0x80,   NULL, NULL},
     {"CP 1255",        T_128,   0,   "microsoft-cp1255", 0x80,   NULL, NULL},
+    /* PATCH(fork, encodings): Windows code pages stock luit had no charset
+     * for (it fell back to ISO 8859-1). Tables in builtin_ja.c. */
+    {"CP 1253",        T_128,   0,   "microsoft-cp1253", 0x80,   NULL, NULL},
+    {"CP 1254",        T_128,   0,   "microsoft-cp1254", 0x80,   NULL, NULL},
+    {"CP 1256",        T_128,   0,   "microsoft-cp1256", 0x80,   NULL, NULL},
+    {"CP 1257",        T_128,   0,   "microsoft-cp1257", 0x80,   NULL, NULL},
+    {"CP 1258",        T_128,   0,   "microsoft-cp1258", 0x80,   NULL, NULL},
+    {"CP 874",         T_128,   0,   "microsoft-cp874",  0x80,   NULL, NULL},
 
     {"CP 437",         T_128,   0,   "ibm-cp437",        0x80,   NULL, NULL},
     {"CP 850",         T_128,   0,   "ibm-cp850",        0x80,   NULL, NULL},
     /* PATCH(fork, encodings): stock's xlfd "ibm-cp852" had no data and was
-     * unmapped (confirmed by measurement). Replaced with our own ICU-derived table. */
+     * unmapped (confirmed by measurement). Replaced with our own generated table. */
     {"CP 852",         T_128,   0,   "cp852-direct-0",   0x80,   NULL, NULL},
     /* PATCH(fork, encodings): the following 3 entries are new additions, since
      * stock luit had no corresponding Encoding/charset entry at all. */
     {"CP 857",         T_128,   0,   "cp857-direct-0",   0x80,   NULL, NULL},
     {"CP 1125",         T_128,   0,   "cp1125-direct-0",  0x80,   NULL, NULL},
     {"MAC ROMAN",       T_128,   0,   "macroman-direct-0", 0x80,   NULL, NULL},
-    /* fork-local: KOI8-T has no ICU converter; its table comes from
-     * iconv-lite (see docs/transcoder-design.md). */
+    /* PATCH(fork, encodings): KOI8-T, see docs/transcoder-design.md. */
     {"KOI8-T",          T_128,   0,   "koi8t-direct-0",   0x80,   NULL, NULL},
     {"CP 865",         T_128,   0,   "ibm-cp865",        0x80,   NULL, NULL},
     {"CP 866",         T_128,   0,   "ibm-cp866",        0x80,   NULL, NULL},
@@ -158,6 +159,9 @@ static const OtherCharsetRec otherCharsets[] =
     /* PATCH(fork, fallback): replaced with the version that replaces unmapped codes with U+FFFD
      * (other_ja.c). stack reuses upstream's stack_gbk as-is. */
     {"GBK",        init_gbkx,    mapping_gbkx,    reverse_gbkx,    stack_gbk},
+    /* PATCH(fork, encodings): see other_ja.c */
+    {"GB2312",     init_gb2312x, mapping_gb2312x, reverse_gb2312x, stack_gbk},
+    {"CP949",      init_cp949,   mapping_cp949,   reverse_cp949,   stack_gbk},
     {"UTF-8",      init_utf8,    mapping_utf8,    reverse_utf8,    stack_utf8},
     {"SJIS",       init_sjis,    mapping_sjis,    reverse_sjis,    stack_sjis},
     /* PATCH(fork, fallback): same as above. stack reuses upstream's stack_hkscs. */
@@ -167,6 +171,9 @@ static const OtherCharsetRec otherCharsets[] =
     {"GB18030",    init_gb18030x, mapping_gb18030x, reverse_gb18030x, stack_gb18030},
     /* PATCH(fork, cp932): see other_ja.c */
     {"CP932",      init_cp932,   mapping_cp932,   reverse_cp932,   stack_cp932},
+    /* PATCH(fork, big5) and PATCH(fork, eucjp): see other_ja.c */
+    {"BIG5X",      init_big5x,   mapping_big5x,   reverse_big5x,   stack_hkscs},
+    {"EUC-JP-2007", init_eucjpx, mapping_eucjpx,  reverse_eucjpx,  stack_eucjp},
     {NULL,         NULL,         NULL,            NULL,            NULL}
 };
 /* *INDENT-ON* */
@@ -219,30 +226,28 @@ compare1(const char *s, const char *t, size_t n)
 
 #define UNICODE_REPLACEMENT_CHAR 0xFFFD
 
-/* PATCH(fork, fallback): applies the fallback policy only to charsets added
- * fork-local (jisx0208-2007-0 / jisx0212.1990-0). Other upstream charsets
- * (GB2312/KSC5601/CNS11643, etc.) are out of scope and keep stock's
- * behavior (luitMapCodeValue's identity fallback) — directly changing
- * luitMapCodeValue itself was confirmed by measurement to break unrelated
- * processing ("Fallback design for conversion failures" in docs/transcoder-design.md).
+/* PATCH(fork, fallback): applies the fallback policy to the charsets whose
+ * table the fork generates (builtin_ja.c), and only those. Other upstream
+ * charsets keep stock's behavior (luitMapCodeValue's identity fallback) --
+ * directly changing luitMapCodeValue itself was confirmed by measurement to
+ * break unrelated processing ("Fallback design for conversion failures" in
+ * docs/transcoder-design.md). Going by the generated list rather than a
+ * list of names here means a new table can't be left out (CP865's once
+ * was).
  */
 #ifdef USE_ICONV
 static int
 isFallbackManagedXlfd(const char *xlfd)
 {
-    return xlfd != NULL &&
-	(!strcmp(xlfd, "jisx0208-2007-0") || !strcmp(xlfd, "jisx0212.1990-0") ||
-	 !strcmp(xlfd, "cp852-direct-0") || !strcmp(xlfd, "cp857-direct-0") ||
-	 !strcmp(xlfd, "cp1125-direct-0") || !strcmp(xlfd, "macroman-direct-0") ||
-	 !strcmp(xlfd, "koi8t-direct-0") ||
-	 /* PATCH(fork, encodings): 3 entries whose xlfd data was missing and unmapped
-	  * under musl, replaced with our own table. Since they go through
-	  * FontencCharsetRecode/Reverse (ISO2022), just adding them here
-	  * is enough for the U+FFFD replacement to take effect. */
-	 !strcmp(xlfd, "big5.eten-0") || !strcmp(xlfd, "gb2312.1980-0") ||
-	 !strcmp(xlfd, "ksc5601.1987-0") ||
-	 /* PATCH(fork, fallback): CP865's table, also replaced with our own. */
-	 !strcmp(xlfd, "ibm-cp865"));
+    int n;
+
+    if (xlfd == NULL)
+	return 0;
+    for (n = 0; builtin_encodings_ja[n].name != NULL; ++n) {
+	if (!strcmp(xlfd, builtin_encodings_ja[n].name))
+	    return 1;
+    }
+    return 0;
 }
 #endif /* USE_ICONV */
 
@@ -255,7 +260,7 @@ FontencCharsetRecode(unsigned int n, const CharsetRec * self)
     /* PATCH(fork): luitMapCodeValueFound()/luitReverseFound() (luitconv.c)
      * are USE_ICONV-backend-only; under !USE_ICONV (--enable-fontenc)
      * they're not even declared in luitconv.h. The fork-local charsets
-     * (isFallbackManagedXlfd) assume ICU-generated tables, and the fontenc
+     * (isFallbackManagedXlfd) assume the generated tables, and the fontenc
      * (.enc file) side has no corresponding data, so this branch can't
      * return a meaningful result under the fontenc backend anyway. To
      * avoid breaking the build, fall back to the upstream-equivalent
@@ -656,6 +661,13 @@ static const LocaleCharsetRec localeCharsets[] =
     {"CP1251",     0, 2, "ASCII", NULL,         "CP 1251",       NULL,         NULL},
     {"CP1252",     0, 2, "ASCII", NULL,         "CP 1252",       NULL,         NULL},
     {"CP1255",     0, 2, "ASCII", NULL,         "CP 1255",       NULL,         NULL},
+    /* PATCH(fork, encodings) */
+    {"CP1253",     0, 2, "ASCII", NULL,         "CP 1253",       NULL,         NULL},
+    {"CP1254",     0, 2, "ASCII", NULL,         "CP 1254",       NULL,         NULL},
+    {"CP1256",     0, 2, "ASCII", NULL,         "CP 1256",       NULL,         NULL},
+    {"CP1257",     0, 2, "ASCII", NULL,         "CP 1257",       NULL,         NULL},
+    {"CP1258",     0, 2, "ASCII", NULL,         "CP 1258",       NULL,         NULL},
+    {"CP874",      0, 2, "ASCII", NULL,         "CP 874",        NULL,         NULL},
     {"CP437",      0, 2, "ASCII", NULL,         "CP 437",        NULL,         NULL},
     {"CP850",      0, 2, "ASCII", NULL,         "CP 850",        NULL,         NULL},
     {"CP852",      0, 2, "ASCII", NULL,         "CP 852",        NULL,         NULL},
@@ -668,14 +680,17 @@ static const LocaleCharsetRec localeCharsets[] =
     {"KOI8-T",     0, 2, "ASCII", NULL,         "KOI8-T",        NULL,         NULL},
     {"TCVN",       0, 2, "ASCII", NULL,         "TCVN",          NULL,         NULL},
 
-    {"GB2312",     0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
+    /* PATCH(fork, encodings): GB 2312 and EUC-KR are read as VS Code reads
+     * them: with iconv-lite's gb2312 table, and as CP949 (other_ja.c). */
+    {"GB2312",     0, 1, NULL,    NULL,         NULL,            NULL,         "GB2312"},
     {"eucJP",      0, 1, "ASCII", "JIS X 0208", "JIS X 0201:GR", "JIS X 0212", NULL},
     /* PATCH(fork, euc-jp-2007): see docs/transcoder-design.md */
-    {"euc-jp-2007", 0, 1, "ASCII", "JIS X 0208 (2007)", "JIS X 0201:GR", "JIS X 0212", NULL},
-    {"eucKR",      0, 1, "ASCII", "KSC 5601",   NULL,            NULL,         NULL},
+    {"euc-jp-2007", 0, 1, NULL,    NULL,         NULL,            NULL,         "EUC-JP-2007"},
+    {"eucKR",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP949"},
     {"eucCN",      0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
     {"eucTW",      0, 1, "ASCII", "CNS11643-1", "CNS11643-2",    "CNS11643-3", NULL},
-    {"Big5",       0, 1, "ASCII", "Big 5",      NULL,            NULL,         NULL},
+    /* PATCH(fork, big5): see other_ja.c */
+    {"Big5",       0, 1, NULL,    NULL,         NULL,            NULL,         "BIG5X"},
 
     {"gbk",        0, 1, NULL,    NULL,         NULL,            NULL,         "GBK"},
     {"UTF-8",      0, 1, NULL,    NULL,         NULL,            NULL,         "UTF-8"},

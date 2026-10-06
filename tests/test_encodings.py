@@ -10,6 +10,7 @@ Usage:
     cd transcoder/src && ./configure --disable-fontenc && make
     python3 tests/test_encodings.py
 """
+import faulthandler
 import fcntl
 import os
 import pty
@@ -29,20 +30,17 @@ LUIT = REPO_ROOT / "transcoder" / "src" / "luit"
 
 # (encoding, input byte sequence (hex), expected code point, description) -- output direction
 OUTPUT_CASES = [
-    ("euc-jp-2007", "fce2", 0x9AD9, "髙 (G1, ICU/WHATWG euc-jp-2007)"),
+    ("euc-jp-2007", "fce2", 0x9AD9, "髙 (G1)"),
     ("euc-jp-2007", "8fecbf", 0x9DD7, "鷗 (G3/SS3, JIS X 0212)"),
     ("euc-jp-2007", "ada1", 0x2460, "① (G1, NEC special character)"),
-    ("euc-jp-2007", "a1c1", 0x301C, "wave dash position (override: U+301C)"),
+    ("euc-jp-2007", "a1c1", 0xFF5E, "wave dash position, shown as VS Code shows it (U+FF5E)"),
     ("euc-jp-2007", "c6fccbdc", None, "日本 (basic JIS X0208; string comparison done separately)"),
-    ("CP932", "fbfc", 0x9AD9, "髙 (direct lookup, ibm-943_P15A-2003)"),
+    ("CP932", "fbfc", 0x9AD9, "髙 (direct lookup)"),
     ("CP932", "8740", 0x2460, "① (NEC special character)"),
-    ("CP932", "8160", 0x301C, "wave dash position (override: U+301C)"),
+    ("CP932", "8160", 0xFF5E, "wave dash position, shown as VS Code shows it (U+FF5E)"),
     ("CP932", "b1", 0xFF71, "half-width katakana ｱ"),
     ("CP932", "5c", 0x005C, "backslash (ASCII, as in Windows/WHATWG, not JIS X 0201's yen sign)"),
     ("CP932", "7e", 0x007E, "tilde (ASCII, not JIS X 0201's overline)"),
-    # Regression check: the existing (unmodified) eucJP/SJIS can't correctly handle NEC/IBM extensions (left unmodified on purpose)
-    ("eucJP", "ada1", 0x2D21, "① (unpatched eucJP still mis-converts = confirms non-regression)"),
-    ("SJIS", "8740", 0x2D21, "① (unpatched SJIS still mis-converts = confirms non-regression)"),
 ]
 
 # (encoding, input string, expected byte sequence (hex)) -- input direction (real PTY round-trip)
@@ -55,52 +53,31 @@ INPUT_ROUNDTRIP_CASES = [
     ("CP932", "日本", "93fa967b"),
 ]
 
-# U+301C has no encode-direction mapping in the euc-jp-2007/CP932 base
-# tables, but the override row also takes effect on the encode direction
-# (an asymmetric mapping), so it doesn't vanish. No case is left where input
-# silently drops, so this is empty.
+# No case is left where input silently drops, so this is empty.
 INPUT_DROP_CASES: list[tuple[str, str, str]] = []
 
-# Verifies, via a real PTY round-trip, that inputting either the wave
-# dash (U+301C) or the fullwidth tilde (U+FF5E) converges to the same byte
-# sequence (source).
-#
-# Why the round-trip method is valid: in both the euc-jp-2007 and
-# cp932-direct-0 tables, there is exactly one entry that decodes to U+301C
-# — the override row (it doesn't exist in the base table at all; confirmed
-# via grep when running tools/gen-tables/gen_tables.py). So if
-# "input -> encode -> child process -> decode -> round-trip read" returns
-# exactly U+301C as a single character, the intermediate byte sequence can
-# only be the override's source (EUC: A1C1 / SJIS: 8160).
-WAVE_DASH_CONVERGENCE_CASES = [
-    ("euc-jp-2007", "〜", "〜 dash (U+301C)"),
-    ("euc-jp-2007", "～", "～ fullwidth tilde (U+FF5E)"),
-    ("CP932", "〜", "〜 dash (U+301C)"),
-    ("CP932", "～", "～ fullwidth tilde (U+FF5E)"),
-]
-
 # Fallback policy when conversion isn't possible.
-# Output direction: undecodable bytes become U+FFFD.
-# (encoding, input byte sequence (hex), fallback mode (always None now), expected code point)
+# Output direction: bytes that can't make a character show U+FFFD for their
+# first byte, and decoding goes on from the second, as in VS Code's editor
+# (tests/test_editor_parity.py checks every such sequence).
+# (encoding, input byte sequence (hex), fallback mode (always None now), expected text)
 FALLBACK_OUTPUT_CASES = [
-    ("euc-jp-2007", "a2af", None, 0xFFFD, "unassigned GL code (default=replace)"),
-    ("CP932", "81ad", None, 0xFFFD, "unassigned SJIS byte (default=replace)"),
-    # GBK / Big5-HKSCS / CP865 use the same fallback as the others. With
-    # upstream's identity fallback, an unmapped code silently mis-converted
-    # into an unrelated character (confirmed by measurement: Big5-HKSCS
-    # a180 -> U+A180).
-    # There's no GBK case: ibm-1386 has no unmapped pairs within the
-    # second-byte range stack_gbk accepts (0x40-0xFE, excluding 0x7F; a
-    # second byte of 0xFF is rejected by stack_gbk itself, so it never
-    # reaches fallback_policy). fallback_policy itself is verified via the
-    # euc-jp-2007/CP932/Big5-HKSCS cases.
-    ("BIG5-HKSCS", "a180", None, 0xFFFD, "Big5-HKSCS unmapped (default=replace); upstream mis-converts it to U+A180"),
+    ("euc-jp-2007", "a2af41", None, "\ufffd\ufffdA", "unassigned JIS X 0208 code: the second byte is read again, as a lead"),
+    ("euc-jp-2007", "8fa141", None, "\ufffd\ufffdA", "JIS X 0212 sequence cut short by ASCII"),
+    ("euc-jp-2007", "9b41", None, "\ufffdA", "0x9B is no CSI in EUC-JP"),
+    ("CP932", "81ad", None, "\ufffd\uff6d", "unassigned pair: the second byte is read again (katakana)"),
+    ("CP932", "8121", None, "\ufffd!", "a lead byte before ASCII isn't dropped"),
+    # With upstream's identity fallback, an unmapped code silently
+    # mis-converted into an unrelated character (Big5-HKSCS a180 -> U+A180).
+    ("BIG5-HKSCS", "a180", None, "\ufffd\ufffd", "Big5-HKSCS unmapped; upstream mis-converts it to U+A180"),
+    ("Big5", "8e40", None, "\ufffd@", "0x8E is a Big5 lead byte, not SS2"),
+    ("GB18030", "81308141", None, "\ufffd0\u4e04", "GB18030 4-byte sequence broken at its last byte"),
     # gb18030_linear_to_codepoint upper-bound check regression: FE 39 FE 39
     # is byte-range-valid but its linear index (1587599) exceeds the
     # maximum (1237575, corresponding to U+10FFFF). Without the upper-bound
     # check, this would produce an invalid code point past U+10FFFF and get
     # output as invalid UTF-8.
-    ("GB18030", "fe39fe39", None, 0xFFFD, "GB18030 linear index exceeds upper bound (default=replace)"),
+    ("GB18030", "fe39fe39", None, "\ufffd", "GB18030 linear index exceeds upper bound"),
 ]
 
 # Input direction: (encoding, input character, fallback mode, expected round-trip result)
@@ -138,7 +115,7 @@ MORE_OUTPUT_CASES = [
     ("GB2312", "b0a1", 0x554A, "GB2312 阿 (same as above. Needed to construct source via the GL scheme (high-bit stripped))"),
     ("BIG5-HKSCS", "a4a4", 0x4E2D, "Big5-HKSCS 中 (same as above)"),
     # gen_tables.py lead-byte range bug regression check: lead bytes
-    # 0xFD/0xFE also have real mappings in ICU (GBK/GB18030 2-byte part/Big5-HKSCS).
+    # 0xFD/0xFE also have real mappings (GBK/GB18030 2-byte part/Big5-HKSCS).
     ("GBK", "fe40", 0xFA0C, "GBK 0xFE lead byte 兀 (gen_tables.py lead-byte range bug regression)"),
     ("GB18030", "fe40", 0xFA0C, "GB18030 2-byte part 0xFE lead byte 兀 (same as above)"),
     ("BIG5-HKSCS", "fe40", 0x9442, "Big5-HKSCS 0xFE lead byte 鑂 (same as above)"),
@@ -150,7 +127,7 @@ MORE_OUTPUT_CASES = [
     ("CP857", "a1", 0x00ED, "CP857 í (table added by the fork)"),
     ("CP1125", "a1", 0x0431, "CP1125 б (table added by the fork)"),
     ("MACROMAN", "a1", 0x00B0, "MACROMAN ° (table added by the fork)"),
-    ("KOI8-T", "80", 0x049B, "KOI8-T қ (table from iconv-lite; ICU has no converter)"),
+    ("KOI8-T", "80", 0x049B, "KOI8-T қ"),
     ("KOI8-T", "d1", 0x044F, "KOI8-T я (Cyrillic half, same layout as KOI8-R)"),
 ]
 
@@ -163,28 +140,15 @@ GB18030_LINEAR_FLAG_CASES = [
     ("GB18030", "813081304142", "" + "AB", "the ASCII \"AB\" right after a 4-byte BMP-gap character isn't corrupted"),
 ]
 
-# gen_tables.py invalid-lead-byte mis-combination (artifact) regression
-# check. uconv --callback skip skips an invalid lead byte one byte at a
-# time and decodes the following trail byte independently, so a naive pair
-# scan can mistakenly merge "invalid lead byte + trail byte" into the table
-# as if it were a legitimate 2-byte mapping (this actually happened for
-# CP932's 0xA0/0xFD/0xFE). This confirms that, after the fix, an invalid
-# lead byte is never mis-combined into a 2-byte character, and the lead
-# byte and trail byte are each output as independent characters.
-#
-# Note: the expected first characters (0xA0->U+00A0, 0xFD->U+00FD,
-# 0xFE->U+00FE, all identity values) were fixed by measurement, and it's
-# unresearched why this path (stack_cp932 judges it an invalid lead byte
-# and returns it as-is as a 1-byte value -> passed to mapping_cp932)
-# returns the identity value instead of fallback_policy (U+FFFD/'?'). What
-# this is meant to verify is that "no mis-combination into 2 bytes occurs"
-# (the output splits into 2 characters) — it does not guarantee the
-# specific value of the first character itself is correct.
+# An invalid CP932 lead byte followed by a trail byte is two characters, the
+# invalid byte shown as U+FFFD as in VS Code, never one 2-byte character.
+# Before the fork's tables only counted rows they have, such a byte showed
+# up as the Latin-1 character with its value.
 # (encoding, input byte sequence (hex), expected output string, description)
 CP932_INVALID_LEAD_BYTE_ARTIFACT_CASES = [
-    ("CP932", "a040", " " + "@", "CP932 0xA0 (outside the half-width katakana range) + '@' isn't mistakenly merged into a single character"),
-    ("CP932", "fd40", "ý" + "@", "CP932 0xFD (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
-    ("CP932", "fe40", "þ" + "@", "CP932 0xFE (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
+    ("CP932", "a040", "\ufffd@", "CP932 0xA0 (outside the half-width katakana range) + '@' isn't mistakenly merged into a single character"),
+    ("CP932", "fd40", "\ufffd@", "CP932 0xFD (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
+    ("CP932", "fe40", "\ufffd@", "CP932 0xFE (outside SJIS's valid lead-byte range) + '@' isn't mistakenly merged into a single character"),
 ]
 
 # iso2022.c T_128 control-range-drop regression check (a case the G3 (SS3)
@@ -201,16 +165,20 @@ ISO2022_T128_CONTROL_RANGE_CASES = [
 
 # When several byte sequences decode to the same code point (CP932's
 # NEC/IBM duplicates, Big5's duplicated box-drawing characters, ...), the
-# input direction must send the bytes ICU itself encodes that code point to,
-# not whichever duplicate the reverse lookup happens to hit. The expected
-# bytes come from `uconv -t <converter>` (see gen_tables.py's
-# mark_decode_only()).
+# input direction must send the bytes VS Code saves that code point as
+# (iconv-lite, with converters.json's corrections), not whichever duplicate
+# the reverse lookup happens to hit (see gen_tables.py's mark_decode_only()).
 # (encoding, input text, expected hex sent to the child, description)
 INPUT_CANONICAL_BYTES_CASES = [
-    ("CP932", "￢ⅰ∵纊", "81cafa4081e6fa5c", "NEC/IBM duplicates encode like ICU ibm-943 (not 0xEEF9/0xEEEF)"),
-    ("euc-jp-2007", "￢∵", "a2cca2e8", "euc-jp-2007 duplicates encode like ICU"),
-    ("BIG5-HKSCS", "═", "f9f9", "Big5-HKSCS duplicated box drawing (0xA2A4/0xF9F9) encodes like ICU ibm-1375"),
-    ("KOI8-T", "қӯя", "80a1d1", "KOI8-T encodes through the iconv-lite table"),
+    ("CP932", "￢ⅰ∵纊", "81cafa4081e6fa5c", "NEC/IBM duplicates encode like VS Code (not 0xEEF9/0xEEEF)"),
+    ("euc-jp-2007", "￢∵", "a2cca2e8", "euc-jp-2007 duplicates encode like VS Code"),
+    ("BIG5-HKSCS", "═", "f9f9", "Big5-HKSCS duplicated box drawing (0xA2A4/0xF9F9) encodes like VS Code"),
+    ("KOI8-T", "қӯя", "80a1d1", "KOI8-T encodes through its table"),
+    # The wave dash: 〜 (macOS's input methods) and ～ (Windows') are both
+    # sent as the bytes shown as ～, and so is № in EUC-JP (as the
+    # wave-dash-unify extension saves them; not iconv-lite's 0x8FA2B7/0x8FA2F1)
+    ("euc-jp-2007", "〜～№", "a1c1a1c1ade2", "EUC-JP wave dash, fullwidth tilde and numero sign"),
+    ("CP932", "〜～", "81608160", "Shift JIS wave dash and fullwidth tilde"),
     ("CP932", "\\¥~‾", "5c5c7e7e", "CP932 backslash/yen and tilde/overline both encode to 0x5C/0x7E (WHATWG)"),
 ]
 
@@ -219,8 +187,8 @@ INPUT_CANONICAL_BYTES_CASES = [
 FALLBACK_REGRESSION_CASES = [
     ("euc-jp-2007", "Hello, World!", "Hello, World!", "multiple ASCII characters"),
     ("CP932", "Hello, World!", "Hello, World!", "ASCII works under CP932 too"),
-    ("euc-jp-2007", "髙鷗①〜", "髙鷗①〜", "known Japanese characters"),
-    ("CP932", "髙①〜", "髙①〜", "known CP932 characters"),
+    ("euc-jp-2007", "髙鷗①〜", "髙鷗①～", "known Japanese characters (〜 comes back as ～, how 0xA1C1 is shown)"),
+    ("CP932", "髙①〜", "髙①～", "known CP932 characters (〜 comes back as ～, how 0x8160 is shown)"),
     # The 3 encodings whose implementation the fork replaced. Patching the
     # shared functions once broke ASCII, so ASCII passthrough is always
     # verified.
@@ -273,7 +241,7 @@ def run_roundtrip_case(enc: str, text: str, expect_hex: str) -> tuple[bool, str]
     nbytes = len(bytes.fromhex(expect_hex))
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", str(nbytes), "-"])
+        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", str(nbytes)])
         os._exit(1)
     attrs = termios.tcgetattr(fd)
     attrs[3] = attrs[3] & ~termios.ECHO
@@ -315,7 +283,7 @@ def run_roundtrip_case(enc: str, text: str, expect_hex: str) -> tuple[bool, str]
 def run_drop_case(enc: str, text: str, reason: str) -> tuple[bool, str]:
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8", "-"])
+        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8"])
         os._exit(1)
     attrs = termios.tcgetattr(fd)
     attrs[3] = attrs[3] & ~termios.ECHO
@@ -348,53 +316,12 @@ def run_drop_case(enc: str, text: str, reason: str) -> tuple[bool, str]:
     return False, f"expected it to vanish but received: {out!r}"
 
 
-def run_wave_dash_case(enc: str, text: str, label: str) -> tuple[bool, str]:
-    """Verifies that regardless of which character was input, it always becomes U+301C after the round trip (i.e. converges to the same byte sequence)."""
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execvp(str(LUIT), ["luit", "-encoding", enc, "--", "head", "-c", "8", "-"])
-        os._exit(1)
-    attrs = termios.tcgetattr(fd)
-    attrs[3] = attrs[3] & ~termios.ECHO
-    termios.tcsetattr(fd, termios.TCSANOW, attrs)
-    time.sleep(0.4)
-    os.write(fd, text.encode("utf-8"))
-    out = b""
-    end = time.time() + 1.5
-    while time.time() < end:
-        r, _, _ = select.select([fd], [], [], 0.3)
-        if not r:
-            continue
-        try:
-            d = os.read(fd, 4096)
-        except OSError:
-            break
-        if not d:
-            break
-        out += d
-    try:
-        os.close(fd)
-    except OSError:
-        pass
-    try:
-        os.waitpid(pid, 0)
-    except Exception:
-        pass
-    try:
-        got_text = out.decode("utf-8")
-    except UnicodeDecodeError:
-        return False, f"invalid UTF-8: {out!r}"
-    if got_text != "〜":
-        return False, f"after round trip {got_text!r} != U+301C (didn't converge)"
-    return True, f"input ({label}) -> converged to U+301C after round trip (intermediate byte sequence is determined by the override's source)"
-
-
-def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect_cp: int | None) -> tuple[bool, str]:
+def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect: str | None) -> tuple[bool, str]:
     args = [str(LUIT), "-c"]
     args += ["-encoding", enc]
     data = bytes.fromhex(hexin)
     p = subprocess.run(args, input=data, capture_output=True)
-    if expect_cp is None:
+    if expect is None:
         if p.stdout == b"":
             return True, "0 bytes (as expected)"
         return False, f"expected 0 bytes but received: {p.stdout!r}"
@@ -402,9 +329,9 @@ def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect_cp: 
         text = p.stdout.decode("utf-8")
     except UnicodeDecodeError:
         return False, f"invalid UTF-8: {p.stdout!r}"
-    if len(text) != 1 or ord(text) != expect_cp:
-        return False, f"expected U+{expect_cp:04X} but got: {p.stdout!r}"
-    return True, f"U+{ord(text):04X}"
+    if text != expect:
+        return False, f"expected {expect!r} but got {text!r}"
+    return True, repr(text)
 
 
 def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None, expect: str) -> tuple[bool, str]:
@@ -495,7 +422,8 @@ def run_encode_last_arg_case(enc: str, command: str, expect_status: int, expect_
     os.close(fd)
     text = out.decode("utf-8", "replace")
     # No case's command line may run its "RAN" marker if it was refused
-    ok = got == expect_status and expect_output in text and not (expect_status == 1 and "RAN" in text)
+    # od's column spacing differs between GNU and BSD
+    ok = got == expect_status and expect_output in " ".join(text.split()) and not (expect_status == 1 and "RAN" in text)
     return ok, f"exit status {got} (expected {expect_status}), output {text!r}"
 
 
@@ -553,13 +481,14 @@ def run_notify_case() -> tuple[bool, str]:
 
 
 # Started like a terminal starts a shell (pty.fork: a session leader with
-# the pty as its controlling terminal), the process tree is inverted: the
-# started process becomes the shell itself, so its status is the shell's,
-# signals included.
+# the pty as its controlling terminal), the process tree is inverted on Linux:
+# the started process becomes the shell itself, so its status is the shell's,
+# signals included. Elsewhere (macOS) luit stays the shell's parent and
+# reports a signal as 128 + signal, as shells do.
 EXIT_STATUS_CASES = [
     ("exit 0", 0),
     ("exit 3", 3),
-    ("kill -TERM $$", -15),
+    ("kill -TERM $$", -15 if sys.platform == "linux" else 128 + 15),
 ]
 
 
@@ -581,6 +510,106 @@ def run_inverted_tree_case() -> tuple[bool, str]:
         os.close(fd)
     ok = exe not in ("luit",) and "luit" not in child_exes
     return ok, f"started process runs {exe}, its children: {child_exes}"
+
+
+def run_quick_exit_case(runs: int = 2000) -> tuple[bool, str]:
+    """A command that prints and exits at once still shows its output. The
+    converter used to die with the shell's SIGHUP when it ran late (about 1
+    in 300 runs with everything on one CPU), so this runs on one CPU, many
+    times."""
+    cpu = min(os.sched_getaffinity(0))
+    lost = 0
+    for _ in range(runs):
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.sched_setaffinity(0, {cpu})
+            os.execv(str(LUIT), ["luit", "-encoding", "euc-jp-2007", "--",
+                                 "sh", "-c", "printf 'out:\\306\\374\\n'; exit 3"])
+        out = b""
+        while True:
+            r, _, _ = select.select([fd], [], [], 5)
+            if not r:
+                break
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            out += data
+        os.waitpid(pid, 0)
+        os.close(fd)
+        if "out:日".encode() not in out:
+            lost += 1
+    return lost == 0, f"output lost in {lost} of {runs} runs"
+
+
+def run_slow_reader_case() -> tuple[bool, str]:
+    """A paste isn't lost when the program reads it later than it arrives.
+    luit's writes to the pty are non-blocking, and whatever didn't fit used
+    to be dropped: with the reader a second late, 20 KB of 200 KB arrived."""
+    import threading
+    data = b"0123456789" * 20_000
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "received.bin")
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execv(str(LUIT), ["luit", "-encoding", "ISO8859-1", "--", "sh", "-c",
+                                 'stty raw -echo; sleep 1; exec cat > "$0"', out])
+        time.sleep(0.5)
+
+        def write_all() -> None:
+            for i in range(0, len(data), 4096):
+                os.write(fd, data[i:i + 4096])
+
+        writer = threading.Thread(target=write_all, daemon=True)
+        writer.start()
+        size, last_change, start = -1, time.time(), time.time()
+        while time.time() - start < 20:
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    os.read(fd, 65536)
+                except OSError:
+                    break
+            now = os.path.getsize(out) if os.path.exists(out) else 0
+            if now != size:
+                size, last_change = now, time.time()
+            if now >= len(data) or (time.time() - start > 3 and time.time() - last_change > 2):
+                break
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        writer.join(1)
+        os.close(fd)
+        got = open(out, "rb").read() if os.path.exists(out) else b""
+    return got == data, f"{len(got)} of {len(data)} bytes arrived intact"
+
+
+def run_layout_case() -> tuple[bool, str]:
+    """Started the way a terminal starts a shell, luit inverts the tree where
+    a session leader may give up its controlling terminal (Linux) and keeps
+    the classic layout where it can't (TIOCNOTTY fails on macOS). Either
+    way the shell runs and its exit status comes back, and whatever started
+    luit (this process) isn't sent a signal."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execv(str(LUIT), ["luit", "-v", "-encoding", "euc-jp-2007", "--", "sh", "-c", "echo ran; exit 5"])
+    out = b""
+    try:
+        while True:
+            d = os.read(fd, 1024)
+            if not d:
+                break
+            out += d
+    except OSError:
+        pass
+    _, status = os.waitpid(pid, 0)
+    os.close(fd)
+    code = os.waitstatus_to_exitcode(status)
+    note = next((l for l in out.splitlines() if b"classic layout" in l), b"inverted")
+    classic = note != b"inverted"
+    ok = code == 5 and b"ran" in out and classic == (sys.platform != "linux")
+    return ok, f"exit status {code}, {note.decode(errors='replace').strip()}"
 
 
 def run_resize_case() -> tuple[bool, str]:
@@ -819,6 +848,10 @@ def run_kg3_input_case(kg3_charset: str, text: str, expect: str) -> tuple[bool, 
 
 
 def main() -> int:
+    # Results as they happen, and a traceback if the process dies on a
+    # signal: otherwise a crash loses everything still buffered.
+    sys.stdout.reconfigure(line_buffering=True)
+    faulthandler.enable()
     if not LUIT.exists():
         print(f"NG: {LUIT} not found. Run configure && make in transcoder/src first.", file=sys.stderr)
         return 1
@@ -854,15 +887,6 @@ def main() -> int:
             if not ok:
                 failures += 1
 
-    print("\n== Input direction (wave dash / fullwidth tilde convergence check) ==")
-    for enc, text, label in WAVE_DASH_CONVERGENCE_CASES:
-        total += 1
-        ok, detail = run_wave_dash_case(enc, text, label)
-        mark = "OK " if ok else "NG "
-        print(f"{mark}[{enc}] {text!r} -> {detail}")
-        if not ok:
-            failures += 1
-
     print("\n== Chinese, Korean, and single-byte encodings (incl. GB18030 4-byte) ==")
     for enc, hexin, expect_cp, desc in MORE_OUTPUT_CASES:
         total += 1
@@ -881,7 +905,7 @@ def main() -> int:
         if not ok:
             failures += 1
 
-    print("\n== gen_tables.py invalid-lead-byte mis-combination (artifact) regression check ==")
+    print("\n== invalid CP932 lead bytes ==")
     for enc, hexin, expect_text, desc in CP932_INVALID_LEAD_BYTE_ARTIFACT_CASES:
         total += 1
         ok, detail = run_output_string_case(enc, hexin, expect_text)
@@ -890,7 +914,7 @@ def main() -> int:
         if not ok:
             failures += 1
 
-    print("\n== Input direction: duplicates encode to ICU's bytes (real PTY) ==")
+    print("\n== Input direction: duplicates encode to VS Code's bytes (real PTY) ==")
     for enc, text, expect_hex, desc in INPUT_CANONICAL_BYTES_CASES:
         total += 1
         ok, detail = run_input_bytes_case(enc, text, expect_hex)
@@ -909,9 +933,9 @@ def main() -> int:
             failures += 1
 
     print("\n== Fallback: output direction ==")
-    for enc, hexin, mode, expect_cp, desc in FALLBACK_OUTPUT_CASES:
+    for enc, hexin, mode, expect, desc in FALLBACK_OUTPUT_CASES:
         total += 1
-        ok, detail = run_fallback_output_case(enc, hexin, mode, expect_cp)
+        ok, detail = run_fallback_output_case(enc, hexin, mode, expect)
         mark = "OK " if ok else "NG "
         print(f"{mark}[{enc} fallback={mode or 'default'}] {hexin} -> {detail}  # {desc}")
         if not ok:
@@ -955,6 +979,9 @@ def main() -> int:
     # (name, function, needs Linux: /proc, or the Linux-only tab title)
     for name, fn, linux_only in [
             ("inverted (as started by a terminal)", run_inverted_tree_case, True),
+            ("a command that prints and exits at once shows its output", run_quick_exit_case, True),
+            ("inverted on Linux, classic elsewhere, shell runs either way", run_layout_case, False),
+            ("a paste survives a program that reads it late", run_slow_reader_case, False),
             ("resize reaches the shell", run_resize_case, False),
             ("closing the terminal ends shell and converter", run_hangup_case, True),
             ("tab title follows the foreground program", run_title_case, True),

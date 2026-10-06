@@ -134,12 +134,8 @@ stack_cp932(unsigned c, OtherStatePtr s)
 	}
 	return (int) c;
     } else {
-	int b;
-	if (c < 0x40 || c == 0x7F) {
-	    s->cp932.buf = -1;
-	    return (int) c;
-	}
-	b = (int) ((unsigned) (s->cp932.buf << 8) + c);
+	/* PATCH(fork, invalid sequences): as in stack_gbk() (other.c). */
+	int b = (int) ((unsigned) (s->cp932.buf << 8) + c);
 	s->cp932.buf = -1;
 	return b;
     }
@@ -158,7 +154,7 @@ stack_cp932(unsigned c, OtherStatePtr s)
  *
  * stack_gb18030()'s (other.c) own linear-index computation was correct
  * (that part of upstream is fine), so it's reused as-is. Only mapping/
- * reverse are reimplemented, on top of the ICU-derived 2-byte table
+ * reverse are reimplemented, on top of the generated 2-byte table
  * (gb18030-2byte-0), the 4-byte range table (gb18030_ranges.c, the BMP
  * gaps), and a single formula for the supplementary planes.
  */
@@ -247,9 +243,10 @@ mapping_gb18030x(unsigned int n, OtherStatePtr s)
 	 * through" return at the top for both linear and non-linear input,
 	 * which misbehaved when n was a linear index, catching even 0 (a
 	 * legitimate value, U+0080) (found by measurement). It now applies
-	 * only to the non-linear side.
+	 * only to the non-linear side. 0x80 itself is in the table (the euro
+	 * sign, as in VS Code and the WHATWG Encoding Standard).
 	 */
-	if (n <= 0x80)
+	if (n < 0x80)
 	    return n;
 	if (luitMapCodeValueFound(n, s->gb18030.cs0_mapping, &found_value))
 	    return found_value;
@@ -270,7 +267,7 @@ reverse_gb18030x(unsigned int n, OtherStatePtr s)
     unsigned int linear;
     int found;
 
-    if (n <= 0x80)
+    if (n < 0x80)
 	return n;
 
     /* Try the 2-byte part first (same priority as upstream's reverse_gb18030) */
@@ -306,97 +303,249 @@ reverse_gb18030x(unsigned int n, OtherStatePtr s)
 }
 
 /*
- * GBK / Big5-HKSCS with the fallback policy applied
+ * GBK, GB 2312, CP949 (EUC-KR) and Big5-HKSCS: 2-byte charsets keyed on the
+ * raw bytes, with the fallback policy applied.
  *
  * upstream's mapping_gbk()/mapping_hkscs() (other.c) call plain
  * MapCodeValue(), so for an unmapped character luitMapCodeValue()'s
- * identity fallback kicks in and silently
- * mis-converts it into an unrelated Unicode character. Like CP932/GB18030,
- * these versions decide reliably with luitMapCodeValueFound()/
- * luitReverseFound() and handle unmapped codes explicitly.
+ * identity fallback kicks in and silently mis-converts it into an
+ * unrelated Unicode character. Like CP932/GB18030, these decide reliably
+ * with luitMapCodeValueFound()/luitReverseFound() and handle unmapped codes
+ * explicitly. Single high bytes (e.g. GBK's 0x80, the euro sign) are in the
+ * tables, like in VS Code's iconv-lite, rather than special-cased.
  *
- * Byte assembly (stack_gbk/stack_hkscs) from upstream is fine and is
- * reused (the same call as for stack_gb18030).
- *
- * The EURO special case (0x80 <-> U+20AC) follows upstream as-is.
+ * Byte assembly is upstream's (stack_gbk/stack_hkscs). GB 2312 and EUC-KR
+ * are read as VS Code reads them: GB 2312 with iconv-lite's gb2312 table
+ * (GBK without its user-defined areas), EUC-KR as CP949 (Unified Hangul
+ * Code, whose extra 2-byte codes EUC-KR lacks). They share aux_gbk.
  */
-#define EURO_10646_JA 0x20AC
+static int
+init_direct(FontMapPtr *mapping, FontMapReversePtr *reverse, const char *table)
+{
+    *mapping = LookupMapping(table, us16BIT);
+    if (!*mapping)
+	return 0;
+    *reverse = LookupReverse(*mapping);
+    return *reverse != NULL;
+}
 
-unsigned int
-mapping_gbkx(unsigned int n, OtherStatePtr s)
+static unsigned int
+mapping_direct(unsigned int n, FontMapPtr mapping, const char *name)
 {
     unsigned found_value;
 
     if (n < 128)
 	return n;
-    if (n == 128)
-	return EURO_10646_JA;
-
-    if (luitMapCodeValueFound(n, s->gbk.mapping, &found_value))
+    if (luitMapCodeValueFound(n, mapping, &found_value))
 	return found_value;
+    return apply_decode_fallback(n, name);
+}
 
-    return apply_decode_fallback(n, "GBK");
+static unsigned int
+reverse_direct(unsigned int n, FontMapReversePtr reverse, const char *name)
+{
+    unsigned found_value;
+
+    if (n < 128)
+	return n;
+    if (luitReverseFound(n, reverse, &found_value))
+	return found_value;
+    /* copyIn()'s OTHER branch (iso2022.c) unconditionally continues
+     * regardless of the result, so the rejection has to be flagged here
+     * (same reason as reverse_cp932). */
+    return apply_encode_fallback(n, name);
 }
 
 int
 init_gbkx(OtherStatePtr s)
 {
-    return init_gbk(s);
+    s->gbk.buf = -1;
+    return init_direct(&s->gbk.mapping, &s->gbk.reverse, "gbk-0");
+}
+
+unsigned int
+mapping_gbkx(unsigned int n, OtherStatePtr s)
+{
+    return mapping_direct(n, s->gbk.mapping, "GBK");
 }
 
 unsigned int
 reverse_gbkx(unsigned int n, OtherStatePtr s)
 {
-    unsigned found_value;
+    return reverse_direct(n, s->gbk.reverse, "GBK");
+}
 
-    if (n < 128)
-	return n;
-    if (n == EURO_10646_JA)
-	return 128;
+int
+init_gb2312x(OtherStatePtr s)
+{
+    s->gbk.buf = -1;
+    return init_direct(&s->gbk.mapping, &s->gbk.reverse, "gb2312-0");
+}
 
-    if (luitReverseFound(n, s->gbk.reverse, &found_value))
-	return found_value;
+unsigned int
+mapping_gb2312x(unsigned int n, OtherStatePtr s)
+{
+    return mapping_direct(n, s->gbk.mapping, "GB2312");
+}
 
-    /* copyIn()'s OTHER branch (iso2022.c) unconditionally continues
-     * regardless of the result, so the rejection has to be flagged here
-     * (same reason as reverse_cp932). */
-    return apply_encode_fallback(n, "GBK");
+unsigned int
+reverse_gb2312x(unsigned int n, OtherStatePtr s)
+{
+    return reverse_direct(n, s->gbk.reverse, "GB2312");
+}
+
+int
+init_cp949(OtherStatePtr s)
+{
+    s->gbk.buf = -1;
+    return init_direct(&s->gbk.mapping, &s->gbk.reverse, "cp949-0");
+}
+
+unsigned int
+mapping_cp949(unsigned int n, OtherStatePtr s)
+{
+    return mapping_direct(n, s->gbk.mapping, "CP949");
+}
+
+unsigned int
+reverse_cp949(unsigned int n, OtherStatePtr s)
+{
+    return reverse_direct(n, s->gbk.reverse, "CP949");
 }
 
 int
 init_hkscsx(OtherStatePtr s)
 {
-    return init_hkscs(s);
+    s->hkscs.buf = -1;
+    return init_direct(&s->hkscs.mapping, &s->hkscs.reverse, "big5hkscs-0");
 }
 
 unsigned int
 mapping_hkscsx(unsigned int n, OtherStatePtr s)
 {
-    unsigned found_value;
-
-    if (n < 128)
-	return n;
-    if (n == 128)
-	return EURO_10646_JA;
-
-    if (luitMapCodeValueFound(n, s->hkscs.mapping, &found_value))
-	return found_value;
-
-    return apply_decode_fallback(n, "Big5-HKSCS");
+    return mapping_direct(n, s->hkscs.mapping, "Big5-HKSCS");
 }
 
 unsigned int
 reverse_hkscsx(unsigned int n, OtherStatePtr s)
 {
+    return reverse_direct(n, s->hkscs.reverse, "Big5-HKSCS");
+}
+
+/*
+ * Big5 as VS Code reads it (CP950), keyed on the raw bytes like Big5-HKSCS.
+ * It was a T_94192 charset in GR, where luit took the C1 bytes 0x8E, 0x8F
+ * and 0x9B, which are Big5 lead bytes, for SS2, SS3 and CSI.
+ */
+int
+init_big5x(OtherStatePtr s)
+{
+    s->hkscs.buf = -1;
+    return init_direct(&s->hkscs.mapping, &s->hkscs.reverse, "big5.eten-0");
+}
+
+unsigned int
+mapping_big5x(unsigned int n, OtherStatePtr s)
+{
+    return mapping_direct(n, s->hkscs.mapping, "Big5");
+}
+
+unsigned int
+reverse_big5x(unsigned int n, OtherStatePtr s)
+{
+    return reverse_direct(n, s->hkscs.reverse, "Big5");
+}
+
+/*
+ * EUC-JP as VS Code reads it. Codes are the raw bytes: 0xA1A1-0xFEFE (JIS
+ * X 0208, the table keyed on GL), 0x8EA1-0x8EDF (JIS X 0201 katakana) and
+ * 0x8FA1A1-0x8FFEFE (JIS X 0212, keyed on GL). It was an ISO 2022 setup
+ * (G1 in GR, G2/G3 by single shifts), whose decoder dropped or passed
+ * through invalid bytes and took 0x9B for CSI; VS Code's editor shows them
+ * as U+FFFD. Which table a character is sent from is decided when the
+ * tables are generated (only one row encodes a character).
+ */
+#define EUC_GL(n) ((n) & 0x7F7F)
+
+int
+init_eucjpx(OtherStatePtr s)
+{
+    s->eucjp.buf_ptr = 0;
+    return (init_direct(&s->eucjp.x0208mapping, &s->eucjp.x0208reverse, "jisx0208-2007-0")
+	    && init_direct(&s->eucjp.x0201mapping, &s->eucjp.x0201reverse, "jisx0201.1976-0")
+	    && init_direct(&s->eucjp.x0212mapping, &s->eucjp.x0212reverse, "jisx0212.1990-0"));
+}
+
+static int
+euc_byte(unsigned n)
+{
+    return n >= 0xA1 && n <= 0xFE;
+}
+
+unsigned int
+mapping_eucjpx(unsigned int n, OtherStatePtr s)
+{
+    unsigned found_value;
+    unsigned hi = (n >> 8) & 0xFF, lo = n & 0xFF;
+
+    if (n < 0x80)
+	return n;
+    if (n >> 16) {
+	if ((n >> 16) == 0x8F && euc_byte(hi) && euc_byte(lo)
+	    && luitMapCodeValueFound(EUC_GL(n), s->eucjp.x0212mapping, &found_value))
+	    return found_value;
+    } else if (hi == 0x8E) {
+	if (luitMapCodeValueFound(lo, s->eucjp.x0201mapping, &found_value))
+	    return found_value;
+    } else if (euc_byte(hi) && euc_byte(lo)) {
+	if (luitMapCodeValueFound(EUC_GL(n), s->eucjp.x0208mapping, &found_value))
+	    return found_value;
+    }
+    return apply_decode_fallback(n, "EUC-JP");
+}
+
+unsigned int
+reverse_eucjpx(unsigned int n, OtherStatePtr s)
+{
     unsigned found_value;
 
-    if (n < 128)
+    if (n < 0x80)
 	return n;
-    if (n == EURO_10646_JA)
-	return 128;
+    if (luitReverseFound(n, s->eucjp.x0208reverse, &found_value))
+	return found_value | 0x8080;
+    if (luitReverseFound(n, s->eucjp.x0201reverse, &found_value))
+	return 0x8E00 | found_value;
+    if (luitReverseFound(n, s->eucjp.x0212reverse, &found_value))
+	return 0x8F8080 | found_value;
+    /* same reason as reverse_cp932 */
+    return apply_encode_fallback(n, "EUC-JP");
+}
 
-    if (luitReverseFound(n, s->hkscs.reverse, &found_value))
-	return found_value;
+int
+stack_eucjp(unsigned c, OtherStatePtr s)
+{
+    aux_eucjp *e = &s->eucjp;
 
-    return apply_encode_fallback(n, "Big5-HKSCS");
+    if (e->buf_ptr == 0) {
+	if (c < 0x80)
+	    return (int) c;
+	e->buf[e->buf_ptr++] = (int) c;
+	return -1;
+    }
+    if (e->buf_ptr == 1 && e->buf[0] == 0x8F) {
+	if (!euc_byte(c)) {
+	    e->buf_ptr = 0;
+	    return OTHER_INVALID;
+	}
+	e->buf[e->buf_ptr++] = (int) c;
+	return -1;
+    }
+    /* any other byte makes a code, unmapped if invalid (see stack_gbk) */
+    {
+	unsigned code = (unsigned) e->buf[0];
+	if (e->buf_ptr == 2)
+	    code = (code << 8) | (unsigned) e->buf[1];
+	e->buf_ptr = 0;
+	return (int) ((code << 8) | c);
+    }
 }

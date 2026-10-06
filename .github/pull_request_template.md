@@ -7,7 +7,8 @@
 <!-- How you verified it. Check what applies -->
 
 - [ ] `npm run compile && npm run lint && npm run test:unit`
-- [ ] `python3 tests/test_encodings.py` (if you changed `transcoder/`)
+- [ ] `python3 tests/test_encodings.py` and `python3 tests/test_editor_parity.py`
+      (if you changed `transcoder/` or a conversion table)
 - [ ] `npm run test:integration` (if it affects the extension's integration tests)
 - [ ] `python3 tools/gen-tables/gen_tables.py --check` (if you changed a conversion
       table. Don't forget to update the golden hash

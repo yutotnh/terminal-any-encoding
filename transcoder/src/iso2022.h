@@ -79,6 +79,9 @@ typedef struct _Iso2022 {
     size_t buffered_len;
     size_t buffered_count;
     int buffered_ku;
+    /* PATCH(fork, invalid sequences): the bytes OTHER's stack function holds */
+    unsigned char other_pending[4];
+    unsigned other_pending_count;
     unsigned char *outbuf;
     size_t outbuf_count;
 } Iso2022Rec, *Iso2022Ptr;
@@ -98,6 +101,8 @@ int initIso2022(const char *, const char *, Iso2022Ptr);
 int mergeIso2022(Iso2022Ptr, Iso2022Ptr);
 void reportIso2022(const char *, Iso2022Ptr);
 int copyIn(Iso2022Ptr, int, unsigned char *, int, int);
+int inputPending(void);		/* PATCH(fork, input backpressure) */
+int flushInput(int, int);	/* PATCH(fork, input backpressure) */
 void copyOut(Iso2022Ptr, int, unsigned char *, unsigned);
 
 #ifdef NO_LEAKS

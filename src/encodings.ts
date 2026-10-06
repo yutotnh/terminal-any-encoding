@@ -8,14 +8,9 @@
  * correctly (see docs/transcoder-design.md). Variants (e.g. EUC-JP-MS) aren't
  * offered, so Japanese has only one entry each for euc-jp-2007 / CP932.
  *
- * **Covers all 45 non-UTF encodings VS Code supports.** KOI8-T's
- * table comes from iconv-lite, since ICU has no converter for it (see
- * docs/transcoder-design.md).
- *
- * Deliberately unsupported: the `EUC-JP-MS` variant (ICU has no matching
- * converter), covered in practice by the default `euc-jp-2007` (real
- * hardware verification against the target system confirmed 髙 is at
- * `FC E2`, matching the euc-jp-2007 family).
+ * **Covers all 45 non-UTF encodings VS Code supports**, with the transcoder
+ * converting them as VS Code's editor does (its tables come from iconv-lite;
+ * see docs/transcoder-design.md).
  */
 
 export interface EncodingDefinition {

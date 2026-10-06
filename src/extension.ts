@@ -61,8 +61,12 @@ const EXTENSION_ID = "terminalAnyEncoding";
 const TASK_TYPE = EXTENSION_ID;
 
 // Encodings used to open terminals, most recent first (the picker lists
-// them first); globalState, set up in activate().
-let recentEncodings: vscode.Memento | undefined;
+// them first). Kept here and only written to globalState (read once, in
+// activate()): globalState echoes each write back from VS Code's side, and
+// a late echo of an earlier write can replace a newer value in memory, so
+// reading it back could list what was used before the last terminal.
+let recentEncodingIds: string[] = [];
+let recentEncodingsStore: vscode.Memento | undefined;
 const RECENT_ENCODINGS_KEY = "recentEncodings";
 
 // Locale warnings already shown during this activation (≈ per VS Code
@@ -500,9 +504,7 @@ async function pickEncoding(): Promise<EncodingDefinition | undefined> {
     description: e.id,
     encoding: e,
   });
-  const { recent, others } = groupForPicker(
-    recentEncodings?.get<string[]>(RECENT_ENCODINGS_KEY, []) ?? [],
-  );
+  const { recent, others } = groupForPicker(recentEncodingIds);
   type Item = vscode.QuickPickItem & { encoding?: EncodingDefinition };
   const separator = (label: string): Item => ({
     label,
@@ -562,13 +564,8 @@ function prepareTerminal(
     return undefined;
   }
   void maybeWarnAboutLocale(encoding, built.locale);
-  void recentEncodings?.update(
-    RECENT_ENCODINGS_KEY,
-    recordRecentEncoding(
-      recentEncodings.get<string[]>(RECENT_ENCODINGS_KEY, []),
-      encoding.id,
-    ),
-  );
+  recentEncodingIds = recordRecentEncoding(recentEncodingIds, encoding.id);
+  void recentEncodingsStore?.update(RECENT_ENCODINGS_KEY, recentEncodingIds);
   return built.options;
 }
 
@@ -733,7 +730,11 @@ export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<TestExports> {
   const { extensionPath } = context;
-  recentEncodings = context.globalState;
+  recentEncodingsStore = context.globalState;
+  recentEncodingIds = context.globalState.get<string[]>(
+    RECENT_ENCODINGS_KEY,
+    [],
+  );
   const bundled = resolveTranscoder(extensionPath);
   if (bundled.ok && bundled.location) {
     transcoderCopyPath = installTranscoderCopy(
@@ -792,7 +793,9 @@ export async function activate(
     buildTaskExecution,
     cancelProfileRequest,
     onDidRejectInput: rejectionEmitter.event,
-    clearRecentEncodings: () =>
-      context.globalState.update(RECENT_ENCODINGS_KEY, undefined),
+    clearRecentEncodings: () => {
+      recentEncodingIds = [];
+      return context.globalState.update(RECENT_ENCODINGS_KEY, undefined);
+    },
   };
 }

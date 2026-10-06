@@ -13,15 +13,15 @@ Dickey's official distribution (tarball `luit.tar.gz`, version
 `2.0-20250912`). `transcoder/src/` is the working copy, carrying the fork's
 own patches and additional files (`builtin_ja.c`/`other_ja.c`, etc.).
 
-When adding a new conversion table, how `source` values are represented
-depends on luit's internal charset type. Mapping confirmed by measurement:
+How a table's `source` values are represented depends on luit's internal
+charset type (`plane` in `converters.json`):
 
-| Charset type           | Example                                  | `source` value representation                 |
-| ---------------------- | ---------------------------------------- | --------------------------------------------- |
-| T_94192 (shift=0x8000) | Big5                                     | `n+shift` matches the raw 2-byte value        |
-| T_9494 (shift=0)       | Japanese G1, GB2312, EUC-KR              | GL scheme (high bit stripped from both bytes) |
-| OTHER charset          | CP932, GBK, Big5-HKSCS, GB18030 (2-byte) | Raw 2-byte value                              |
-| T_128                  | Single-byte sets like CP852              | Simple 256-entry table, shift applied         |
+| Charset type               | Example                                                        | `source` value representation                 |
+| -------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| OTHER charset, EUC-JP      | JIS X 0208 (`0xA1A1`-) and JIS X 0212 (after `0x8F`)           | GL scheme (high bit stripped from both bytes) |
+| OTHER charset, EUC-JP      | JIS X 0201 katakana (after `0x8E`)                             | The byte                                      |
+| OTHER charset              | CP932, GBK, GB 2312, CP949 (EUC-KR), Big5, Big5-HKSCS, GB18030 | The raw byte or 2-byte value                  |
+| T_128 / T_96 (single-byte) | CP852, Windows-1252, ISO 8859-x, KOI8-x                        | The byte, all 256 of them                     |
 
 The builtin table mechanism itself (`BuiltInMapping.source`/`.target` are
 `unsigned`) was originally designed to support multi-byte character sets, but
@@ -35,44 +35,73 @@ only works correctly within the standard 94-row range (the main JIS X 0208
 table), and feeding it the IBM-extension lead bytes (`0xFA`-`0xFC`) produces
 an invalid row number and mis-converts (stock luit's `SJIS` still does). So a
 dedicated lookup table keyed directly on the raw SJIS 2-byte value
-(`cp932-direct-0`) was added instead.
+(`cp932-direct-0`) was added instead. GBK, GB 2312, CP949 and Big5-HKSCS
+work the same way, through shared helpers in `other_ja.c`.
 
-CP932's `0x5C`/`0x7E` decode as ASCII `\`/`~`, as on Windows, in the WHATWG
-Encoding Standard and in VS Code's editor (iconv-lite), not as JIS X 0201's
-`¥`/`‾` like upstream's `SJIS`. Otherwise paths and `~/` would read
-differently from the editor, and copied output would contain U+00A5. Typing
-`¥`/`‾` still sends `0x5C`/`0x7E`, like the WHATWG encoder.
+A table "finds" a code only if it has a row for it
+(`luitMapCodeValueFound()` checks the row's text): upstream presets the
+first `length` codes of every table to themselves, so an unmapped byte such
+as CP932's `0xA0` showed up as the Latin-1 character instead of U+FFFD.
 
-## Policy: ICU as the source for conversion tables
+## Policy: iconv-lite as the source for conversion tables
 
-Conversion tables are generated from ICU (`uconv`). Two reasons: data
-derived from glibc can't be embedded due to its license (LGPL), and using
-ICU gives reproducibility that a golden hash can detect if the ICU version
-changes. `tools/gen-tables/gen_tables.py` generates
-`transcoder/src/builtin_ja.c` from the declarations in `converters.json`
-(table name, ICU converter name, plane type), and `--check` verifies that
-regenerating against the current ICU environment matches
-`tools/gen-tables/golden/tables.sha256`. The generated `builtin_ja.c`/
-`other_ja.c` are not hand-edited.
+The terminal shows what VS Code's editor shows: the same bytes are the same
+characters in both, and text copied from one can be searched for in the
+other. So every table is generated from iconv-lite, the library the editor
+reads and saves files with, in the package and version VS Code ships
+(`@vscode/iconv-lite-umd`, pinned in `package-lock.json`).
+`tools/gen-tables/gen_tables.py` decodes every byte sequence of each table's
+shape on its own (`tools/gen-tables/iconv_lite.js`) and writes
+`transcoder/src/builtin_ja.c` and `gb18030_ranges.c` from the declarations
+in `converters.json`; `--check` verifies that regenerating matches
+`tools/gen-tables/golden/tables.sha256`. The generated files are not
+hand-edited. iconv-lite is MIT-licensed; THIRD-PARTY-NOTICES.md says where
+its own data comes from.
 
-The one exception is KOI8-T, which ICU has no converter for. Its table
-(`"iconv_lite"` in `converters.json`) comes from iconv-lite, the library
-VS Code itself decodes files with, so the terminal agrees with the editor.
-Both reasons above still hold: iconv-lite is MIT-licensed, and its version
-is pinned by `package-lock.json` (a devDependency), so a change shows up in
-the golden hash like an ICU change does. To keep "only verified conversions"
-true, generation fails unless the table matches Python's `koi8_t` codec and
-glibc's KOI8-T byte for byte; those are only compared against, never
-embedded. iconv-lite tables are single-byte only, and generation also fails
-if two bytes decode to the same character, since deciding which one encodes
-would need ICU (`mark_decode_only()`).
+`tests/test_editor_parity.py` decodes every byte sequence the editor
+decodes as one character (1-, 2-, 3- and GB18030's 4-byte ones) and types
+every character the editor can save, through a real PTY, for every encoding,
+and compares with iconv-lite. The intended differences, and only those:
 
-ICU and Python's standard `gb18030` codec differ by standard version (a
-difference was observed near U+1E3F); ICU is used, per the policy above.
-GB18030's supplementary planes (U+10000 and above) are expressed
-with a single formula (`linear = cp - 0x10000 + 189000`), while the BMP gaps
-are expressed via a table of 210 contiguous ranges extracted by measurement
-from ICU (`gb18030_ranges.c`, auto-generated).
+- **Typed text comes back as the bytes it was shown from.** iconv-lite's
+  EUC-JP encoder doesn't do that for two characters: ～ U+FF5E (shown from
+  `0xA1C1`) is saved as `0x8FA2B7`, and № U+2116 (from `0xADE2`) as
+  `0x8FA2F1`, which other tools can't read (VS Code issue #48802, iconv-lite
+  #145; the wave-dash-unify extension corrects it on save). They're sent as
+  `0xA1C1` and `0xADE2` (`encode_corrections` in `converters.json`). 〜
+  U+301C, which iconv-lite can't encode at all, is sent as the wave dash,
+  EUC-JP `0xA1C1` or Shift JIS `0x8160` (an input alias, below): macOS's input
+  methods type the wave dash as U+301C, Windows' as U+FF5E, and the editor
+  shows those bytes as U+FF5E. So the terminal behaves like the editor with
+  wave-dash-unify installed.
+- **C1 controls** (U+0080-U+009F) aren't compared: in ISO 8859 terminals
+  `0x8E`/`0x8F`/`0x9B` are SS2/SS3/CSI, not text.
+- **GB18030's unassigned 4-byte ranges** (linear index 39420-188999, and past
+  U+10FFFF) are invalid in the WHATWG Encoding Standard, but iconv-lite
+  decodes them anyway (`0x8431A530` as U+10000); luit shows U+FFFD.
+
+As in VS Code, EUC-KR is read as CP949 (EUC-KR plus Unified Hangul Code) and
+GB 2312 with iconv-lite's `gb2312` table (GBK without its user-defined
+areas); the extension still passes `eucKR`/`GB2312`, so the locale chosen
+for them doesn't change.
+
+Only the built-in tables are used (`lookup_order` in `luit.c`). Upstream
+also looks in X11's font encodings (`.enc` files listed in an
+`encodings.dir` found at build time, or named by
+`FONT_ENCODINGS_DIRECTORY`), the C library's iconv, and finally takes bytes
+as code points, all of which depend on the machine: with Debian/Ubuntu's
+`xfonts-encodings` installed, `gbk-0` and `big5hkscs-0` decoded with that
+data instead of ours, and musl's iconv, which the distributed binaries have,
+has no CP1253/1254/1256/1257/1258/874 at all (luit fell back to ISO 8859-1
+for them). Every charset a supported encoding uses has a generated table;
+the ones named like upstream's (`iso8859-*`, `koi8-*`) replace them, since
+`findBuiltinEncoding()` looks in `builtin_ja.c` first. CI's native test job
+installs `xfonts-encodings`.
+
+GB18030's supplementary planes (U+10000 and above) are a single formula
+(`linear = cp - 0x10000 + 189000`), and the BMP's 4-byte sequences a table
+of contiguous linear-index ranges (`gb18030_ranges.c`), both checked by the
+parity test.
 
 ## Fallback design for conversion failures
 
@@ -80,6 +109,19 @@ On output (decoding), an unmapped byte sequence becomes `U+FFFD`, like
 VS Code's editor shows undecodable bytes. There's no option to skip or
 escape it instead: silently dropped output helps nobody, and such a setting
 would be luit's vocabulary leaking into the UI.
+
+Where the bytes stop making a character is decided as in the editor
+(iconv-lite): the first byte shows `U+FFFD` and decoding goes on from the
+second, whatever byte broke the sequence and however long it was. EUC-JP
+`0x8F 0xA1 0x41` is `U+FFFD U+FFFD A`, GB18030 `0x81 0x30 0x81 0x41` is
+`U+FFFD 0 丄`. Every multi-byte encoding is an OTHER charset for this: its
+stack function only assembles bytes (any second byte makes a 2-byte code,
+unmapped if invalid) or returns `OTHER_INVALID`, and `copyOut()`'s
+`otherByte()` keeps the bytes it held, shows `U+FFFD` and reads the rest
+again. An unmapped 4-byte GB18030 sequence stays one `U+FFFD` (the
+WHATWG Encoding Standard's choice; iconv-lite shows unrelated characters
+there, see above). A lone lead byte waits for the next one: a pty never ends
+the output it's in the middle of.
 
 On input (encoding) there's no option: a chunk of keyboard input containing a
 character the encoding can't represent is rejected as a whole, and the user
@@ -134,41 +176,40 @@ happened once and had to be reverted). Instead, the design is:
 Stock upstream charsets (ones the fork hasn't replaced the tables for) are
 out of scope for this policy and keep their old identity-fallback behavior.
 
-## Override mechanism for differential entries like the wave dash
+## Input aliases: a character that's only typed
 
 In `initializeBuiltInTable()`'s implementation, when multiple entries share
-the same `source`, the **decode direction** (`table_utf8[j]`) is won
-(overwritten) by whichever entry is processed last in the array, while the
-**encode direction** (`rev_index`) unconditionally appends every entry
-(duplicates allowed). This asymmetry is used to implement "decoding is
-overridden, encoding accepts both" just by appending an override row after
-the base row. luit itself is untouched. Each table in `converters.json` can
-have an `overrides` array, and `gen_tables.py` appends the override rows
-after the base rows (from ICU). Example: EUC `A1C1` → U+301C (wave dash) for
-`jisx0208-2007-0`.
+the same `source`, the **decode direction** (`table_utf8[j]`) is won by
+whichever entry is processed last in the array, while every entry can land
+in the reverse index. Each table in `converters.json` can have an
+`input_aliases` array, and `gen_tables.py` puts those rows before the base
+rows: the base row still decides what's displayed, and the alias only adds a
+character that's sent as those bytes, e.g. U+301C → EUC `A1C1` in
+`jisx0208-2007-0`. luit itself is untouched. Whether a row is used for
+encoding is decided like for any other row (next section).
 
-## Duplicate code points: encode the way ICU does
+## Which bytes a character is sent as
 
-Several tables have more than one source code decoding to the same code
-point (CP932's NEC row 13 / NEC-selected IBM / IBM extensions, e.g. U+FFE2 at
-`0x81CA`/`0xEEF9`/`0xFA54`; Big5's duplicated box-drawing characters). Every
-row lands in `rev_index`, and `bsearch()` over equal keys returns an
-unspecified one, so input could send a nonstandard sequence (`0xEEF9`), and
-the choice could even differ between glibc and musl.
+Several characters have more than one byte sequence (CP932's NEC row 13 /
+NEC-selected IBM / IBM extensions, e.g. U+FFE2 at `0x81CA`/`0xEEF9`/
+`0xFA54`; EUC-JP's IBM extension kanji in both JIS X 0208's rows 89-92 and
+JIS X 0212; Big5's duplicated box-drawing characters). Every row would land
+in `rev_index`, `bsearch()` over equal keys returns an unspecified one, and
+luit tries JIS X 0208 before JIS X 0212, so input could send a sequence the
+editor never writes.
 
-`gen_tables.py`'s `mark_decode_only()` asks ICU which bytes it encodes each
-duplicated code point to, and writes the other rows as
+`gen_tables.py`'s `mark_decode_only()` therefore lets a row encode only if
+its bytes are what its character is sent as: iconv-lite's choice, unless
+`encode_corrections` overrides it. The other rows are written as
 `DECODE_ONLY(ucs)` (the `BUILTIN_DECODE_ONLY` bit in
-`BuiltInMapping.target`). `initializeBuiltInTable()` decodes those rows as
-usual but leaves them out of `rev_index`, so encoding always picks ICU's
-choice. No single rule (lowest/highest code) matches ICU across CP932, so
-this has to be data-driven. Upstream tables never set the bit (Unicode stops
-at 0x10FFFF). `tests/test_encodings.py` checks the exact bytes sent.
-
-The table probes run `uconv` with `--callback substitute`, not `skip`. With
-`skip`, an invalid byte in a probed pair silently disappeared, so a 1-byte
-character plus an invalid byte (CP932 `0xD8 0x80`, Big5 `0x81 0xFF`) came
-back as one character and was recorded as a bogus 2-byte mapping.
+`BuiltInMapping.target`), which `initializeBuiltInTable()` decodes as usual
+but leaves out of `rev_index`. This also covers duplicates across tables
+(EUC-JP's IBM extension kanji are sent as JIS X 0212, so their JIS X 0208
+rows are decode-only) and characters the editor can't save at all. With the
+two EUC-JP corrections, every EUC-JP character with several byte sequences
+is sent exactly as glibc's EUC-JP-MS sends it; CP932's 396 duplicated
+characters are sent as Windows (glibc's CP932) sends them. Upstream tables
+never set the bit (Unicode stops at 0x10FFFF).
 
 ## Differences surfaced by the musl static build
 
@@ -182,14 +223,10 @@ always done against the musl static build binary.
 
 ## Deliberately unsupported
 
-- **EUC-JP-MS variant**: ICU has no matching converter (the closest one
-  differs in the position of ①/髙 and can't handle JIS X 0212 either). Real
-  hardware verification against the target system confirmed 髙 is at `FC E2`
-  (= the default `euc-jp-2007`), so this is covered in practice.
-- **Plain EUC-JP variant (without extensions)**: skipped because deciding the
-  boundaries of the NEC/IBM extension rows without a primary source carries
-  too much risk. This is for the rare case where being unable to use ①/髙 is
-  acceptable by spec, and is low priority.
+- **Encodings VS Code doesn't offer**, such as the EUC-JP-MS and plain
+  EUC-JP variants: the terminal offers the editor's list, so both can be
+  used on the same files. EUC-JP input already sends what EUC-JP-MS sends for
+  every character with several byte sequences.
 
 ## Process tree: the shell is the process VS Code started
 
@@ -204,21 +241,29 @@ When started the way terminals start shells, as a session leader whose
 controlling terminal is its stdin (`canInvert()`), luit inverts the tree
 (`condomInverted()` in `luit.c`):
 
-1. It forks the converter and detaches it (double fork, so it's not a child
-   of the shell); the converter calls `setsid()` to leave the process group.
-2. It gives up the outer terminal (`TIOCNOTTY`, ignoring the SIGHUP this
-   sends its own group) and tells the converter, which takes the outer
-   terminal as its controlling terminal (`TIOCSCTTY`). The converter then
-   gets SIGWINCH when VS Code resizes the terminal and SIGHUP when it closes,
-   as luit always did.
+1. It gives up the outer terminal (`TIOCNOTTY`, ignoring the SIGHUP this
+   sends its own process group, i.e. itself; `releaseOuterTerminal()`). If
+   that fails, as it does on macOS (`ENOTTY`), nothing has
+   changed yet and luit keeps the classic layout (`-v` says why).
+2. It forks the converter and detaches it (double fork, so it's not a child
+   of the shell). The helper in between calls `setsid()` first, so the
+   converter is never in the shell's process group: when the shell exits it
+   sends that group SIGHUP, and a converter that hadn't left it yet (it can
+   run late on a busy machine) died before reading anything, so a command
+   that printed and exited at once showed nothing. The converter calls
+   `setsid()` again and takes the outer terminal as its controlling terminal
+   (`TIOCSCTTY`), so it gets SIGWINCH when VS Code resizes the terminal and
+   SIGHUP when it closes, as luit always did.
 3. It takes the inner pty as controlling terminal and execs the shell, so the
    pid VS Code knows is the shell's. Rejection reports carry that pid.
 
 The converter exits when the inner pty closes, i.e. once the shell and
 everything it started are gone. Anything else (no controlling terminal, or
-`-p`) keeps the classic layout. Tests check the tree, resizing, closing the
-outer terminal and the exit status, on glibc and musl builds; macOS isn't
-covered by CI (its `TIOCNOTTY`/`TIOCSCTTY` semantics are the same on paper).
+`-p`) keeps the classic layout. Upstream's "child failed" `SIGABRT` to the
+parent is only sent in the classic layout: with the inverted tree the parent
+is whatever started luit (VS Code). Tests check the tree, resizing, closing
+the outer terminal and the exit status, on glibc and musl builds and on
+macOS.
 
 ## Known upstream bugs and fixes
 
@@ -253,16 +298,39 @@ covered by CI (its `TIOCNOTTY`/`TIOCSCTTY` semantics are the same on paper).
   turned into an unrelated mojibake character. Fixed by explicitly resetting
   `linear = 0` on the ASCII passthrough path (the first fork-local change to
   an upstream-derived file).
+- `stack_gb18030()` also took a 2-byte character's trail byte as 0x40-0xFE
+  except 0x80 and 0xFF, so the 144 characters with trail 0x80 (e.g. 亐,
+  `0x81 0x80`) silently disappeared while 0x7F was let through, and it
+  compared the second byte of a 4-byte sequence with decimal 30 instead of
+  0x30-0x39.
+- Every multi-byte decoder dropped bytes that couldn't make a character: a
+  lead byte followed by ASCII (CP932 `0x81 0x21` showed `!`), both bytes when
+  the second was `0xFF`, and `stack_gb18030()` dropped `0xFF` and broken
+  4-byte sequences. EUC-JP and Big5 were ISO 2022 setups, where a broken
+  sequence lost its lead byte, an invalid byte after SS2 was shown as
+  Latin-1, and the C1 bytes `0x8E`/`0x8F`/`0x9B` were taken for SS2/SS3/CSI,
+  though in Big5 they're lead bytes (`0x8E 0x40` showed `@`, and `0x9B`
+  could swallow what followed as a control sequence). They're OTHER charsets
+  now (`EUC-JP-2007`, `BIG5X` in `other_ja.c`), with the rule above.
 - `gb18030_linear_to_codepoint()`: the supplementary-plane check
   (`linear >= 189000`) had no upper bound, so an invalid 4-byte sequence that
   was byte-range-valid but had a linear index past the maximum could produce
   an invalid code point beyond U+10FFFF. Added an upper bound.
-- `gen_plane_raw2byte()` in `tools/gen-tables/gen_tables.py`: the lead-byte
-  scan range was `0x81`-`0xFC`, omitting the valid lead bytes `0xFD`/`0xFE`
-  used by GBK/GB18030 (2-byte part)/Big5-HKSCS from what got generated.
-  Simply widening the range had a side effect: it let in spurious 2-byte
-  entries where an invalid lead byte, considered alone, happened to decode
-  identically to the trail byte decoded on its own across every entry. So a
-  heuristic was added: for each candidate lead byte, compare against decoding
-  the trail byte alone, and treat a lead byte as an artifact (and exclude it)
-  if every entry matches.
+- `copyIn()` also wrote a G2 (SS2) or G3 (SS3) character according to GR's
+  charset type rather than G2's or G3's. EUC-JP's G2 is 1-byte JIS X 0201
+  katakana next to GR's 2-byte JIS X 0208, so typed half-width katakana
+  were never written (and got rejected); G3 only worked because it has
+  GR's size.
+- `copyIn()` wrote converted input to the pty with one non-blocking
+  `write()` and ignored a short write, so whatever didn't fit was dropped:
+  pasting 200 KB into a program that started reading a second later
+  delivered 20 KB. Converted input is now held back and written as the pty
+  takes it, and no more input is read until it's gone, while the program's
+  output is still read, so neither side can block the other
+  (`flushInput()`, `IO_PtyWritable`).
+- On macOS, luit waited on its ptys with `poll()`, which doesn't support
+  devices there (BUGS in its man page): input went through at a few KB per
+  second. It uses `select()` on macOS.
+- `fromUtf8()` in `iso2022.c` masked a 4-byte UTF-8 lead with `0x03`
+  instead of `0x07`, so U+100000-U+10FFFF (lead `0xF4`) were read as
+  U+0000-U+FFFF.

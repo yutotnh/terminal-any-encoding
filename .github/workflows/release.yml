@@ -28,7 +28,7 @@ permissions:
 jobs:
   verify:
     name: Verify before release
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.4.0
       - uses: actions/setup-node@v4.4.0
@@ -44,10 +44,6 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm run test:unit
-      - name: Install ICU
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libicu-dev icu-devtools
       - name: Conversion table reproducibility check
         run: python3 tools/gen-tables/gen_tables.py --check
 

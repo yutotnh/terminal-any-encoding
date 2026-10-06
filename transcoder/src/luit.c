@@ -82,9 +82,18 @@ int input_unencodable = 0;
 unsigned input_unencodable_char = 0;
 
 #ifdef USE_ICONV
+/* PATCH(fork, built-in tables only): upstream also looks in the system's
+ * ".enc" files (fontenc, first), the C library's iconv, and finally takes
+ * bytes as code points (posix). What those give depends on the machine:
+ * with X11's font encodings installed, gbk-0 and big5hkscs-0 decoded with
+ * their data instead of ours, and musl's iconv, which the distributed
+ * binaries have, knows none of CP1253/1254/1256/1257/1258/874. Every
+ * charset the supported encodings use has a built-in table (builtin.c or
+ * the fork's builtin_ja.c), so only those are used (-prefer can name one
+ * other source to use instead). */
 UM_MODE lookup_order[] =
 {
-    umFONTENC, umBUILTIN, umICONV, umPOSIX, umNONE
+    umBUILTIN, umNONE
 };
 #endif
 
@@ -829,6 +838,7 @@ encodeLastArg(int argc, char **argv)
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
 	}
+	IGNORE_RC(flushInput(fd, 1));
 	done += n;
     }
     size = lseek(fd, 0, SEEK_END);
@@ -1037,6 +1047,17 @@ read_waitpipe(int fds[2])
     IGNORE_RC(read(fds[0], tmp, (size_t) 1));
 }
 
+/* Upstream tells the parent luit, which is waiting on this child, that
+ * the child failed. PATCH(fork, inverted tree): with the inverted tree there
+ * is no such parent: the parent is whatever started luit (VS Code), which
+ * must not get a SIGABRT. */
+static void
+abortParent(void)
+{
+    if (terminal_pid == 0)
+	kill(getppid(), SIGABRT);
+}
+
 static void
 child(int sfd, char *line, char *path, char *const argv[])
 {
@@ -1053,14 +1074,14 @@ child(int sfd, char *line, char *path, char *const argv[])
     if (getsid(0) != getpid()) {
 	pgrp = setsid();
 	if (pgrp < 0) {
-	    kill(getppid(), SIGABRT);
+	    abortParent();
 	    ExitFailure();
 	}
     }
 
     tty = openTty(line);
     if (tty < 0) {
-	kill(getppid(), SIGABRT);
+	abortParent();
 	ExitFailure();
     }
 
@@ -1198,7 +1219,8 @@ parent(int sfd, int pty)
 	/* PATCH(fork, title): VS Code re-reads the tab title every 200 ms,
 	 * output or not, so keep up with the inner foreground program at
 	 * the same pace (e.g. a silent `sleep`). */
-	rc = waitForInput(sfd, pty, title_suffix != NULL ? 200 : -1);
+	rc = waitForInput(sfd, pty, inputPending(),
+			  title_suffix != NULL ? 200 : -1);
 	updateTitle(pty);
 
 	if (sigwinch_queued) {
@@ -1220,7 +1242,12 @@ parent(int sfd, int pty)
 		if (i > 0)
 		    copyOut(outputState, sfd, buf, (unsigned) i);
 	    }
-	    if (rc & IO_CanRead) {
+	    /* PATCH(fork, input backpressure): input the pty didn't take yet
+	     * goes first, and no more is read until it's gone (see
+	     * flushInput() in iso2022.c). */
+	    if ((rc & IO_PtyWritable) && flushInput(pty, 0) < 0)
+		break;
+	    if ((rc & IO_CanRead) && !inputPending()) {
 		i = (int) read(sfd, buf, (size_t) BUFFER_SIZE);
 		if ((i == 0) || ((i < 0) && (errno != EAGAIN)))
 		    break;
@@ -1239,6 +1266,8 @@ parent(int sfd, int pty)
 		    }
 		    if (discard || input_unencodable)
 			reject_until = now + REJECT_QUIET_MILLIS;
+		    if (flushInput(pty, 0) < 0)
+			break;
 		}
 	    }
 	}
@@ -1315,18 +1344,32 @@ canInvert(int sfd)
 }
 
 #if defined(TIOCNOTTY) && defined(TIOCSCTTY)
+/*
+ * Gives up the outer terminal, so that this process can later take the inner
+ * pty as its controlling terminal. Done before anything is forked: if the
+ * system doesn't allow it, nothing has changed yet and condom() keeps the
+ * classic layout. On macOS it fails (ENOTTY, as started by a terminal).
+ * TIOCNOTTY also sends SIGHUP to our own process group, i.e. only us.
+ */
+static int
+releaseOuterTerminal(int sfd)
+{
+    int rc;
+    void (*old) (int) = signal(SIGHUP, SIG_IGN);
+
+    rc = ioctl(sfd, TIOCNOTTY, (char *) 0);
+    if (rc < 0)
+	VERBOSE(1, ("keeping the classic layout: TIOCNOTTY: %s\n",
+		    strerror(errno)));
+    signal(SIGHUP, old == SIG_ERR ? SIG_DFL : old);
+    return rc == 0;
+}
+
 static int
 condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 {
-    int ready[2];
-    int go[2];
     pid_t helper;
-    char c = 0;
 
-    if (pipe(ready) < 0 || pipe(go) < 0) {
-	perror("Couldn't create pipes");
-	ExitFailure();
-    }
     terminal_pid = (long) getpid();
 
     helper = fork();
@@ -1335,18 +1378,20 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	ExitFailure();
     }
     if (helper == 0) {
-	pid_t converter = fork();
+	pid_t converter;
+	/* Out of the shell's process group before the shell can exist: the
+	 * shell takes the inner pty with its group as the foreground one,
+	 * and when it exits (a session leader), that group gets SIGHUP. A
+	 * converter still in it then (it can run late, on a busy machine)
+	 * died before reading anything, so a command that printed and
+	 * exited at once showed nothing. */
+	(void) setsid();
+	converter = fork();
 	if (converter != 0)
 	    _exit(converter < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
-	/* the converter, now an orphan */
-	close(ready[0]);
-	close(go[1]);
+	/* the converter, now an orphan: takes the outer terminal, which
+	 * nobody has now, to get its SIGWINCH and SIGHUP */
 	(void) setsid();
-	IGNORE_RC(write(ready[1], "1", (size_t) 1));
-	close(ready[1]);
-	if (read(go[0], &c, (size_t) 1) != 1)
-	    _exit(EXIT_FAILURE);
-	close(go[0]);
 	(void) ioctl(sfd, TIOCSCTTY, (char *) 0);
 	closeParentTty();
 	free(child_argv);
@@ -1357,19 +1402,7 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
     }
 
     /* the process the outer terminal started: becomes the shell */
-    close(ready[1]);
-    close(go[0]);
     (void) waitpid(helper, NULL, 0);
-    if (read(ready[0], &c, (size_t) 1) != 1)
-	ExitFailure();
-    close(ready[0]);
-    {
-	void (*old) (int) = signal(SIGHUP, SIG_IGN);
-	(void) ioctl(sfd, TIOCNOTTY, (char *) 0);
-	signal(SIGHUP, old == SIG_ERR ? SIG_DFL : old);
-    }
-    IGNORE_RC(write(go[1], "1", (size_t) 1));
-    close(go[1]);
     close(pty);
     child(sfd, line, path, child_argv);
     return EXIT_FAILURE;	/* child() doesn't return */
@@ -1410,7 +1443,7 @@ condom(int argc, char **argv)
     }
 
 #if defined(TIOCNOTTY) && defined(TIOCSCTTY)
-    if (canInvert(sfd))
+    if (canInvert(sfd) && releaseOuterTerminal(sfd))
 	return condomInverted(sfd, pty, line, path, child_argv);
 #endif
 

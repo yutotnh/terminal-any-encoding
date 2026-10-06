@@ -13,17 +13,10 @@ permissions:
 jobs:
   gen-tables-check:
     name: Conversion table reproducibility check
-    # The golden hashes are tied to icu_version_expected in
-    # tools/gen-tables/converters.json; Ubuntu 26.04's apt ships that ICU.
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.4.0
-      - name: Install ICU
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libicu-dev icu-devtools
-          icuinfo | grep -m1 version
-      # KOI8-T's table comes from the iconv-lite devDependency.
+      # The tables come from the @vscode/iconv-lite-umd devDependency.
       - uses: actions/setup-node@v4.4.0
         with:
           node-version-file: ./.nvmrc
@@ -36,14 +29,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.4.0
+      # xfonts-encodings installs X11's ".enc" tables, which upstream luit
+      # would prefer over the fork's built-in ones (see luit.c's
+      # lookup_order); the tests then check that ours still win.
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential autoconf
+          sudo apt-get install -y --no-install-recommends build-essential autoconf xfonts-encodings
+      # The editor-parity test compares with iconv-lite.
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
       - name: Build transcoder
         run: bash transcoder/scripts/build.sh
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
+      - name: Compare every encoding with VS Code's editor
+        timeout-minutes: 10
+        run: python3 tests/test_editor_parity.py
       - name: shellcheck
         run: |
           sudo apt-get install -y --no-install-recommends shellcheck
@@ -58,10 +62,17 @@ jobs:
       - uses: actions/checkout@v4.4.0
       - name: Install build dependencies
         run: brew install autoconf
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
       - name: Build transcoder
         run: bash transcoder/scripts/build.sh
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
+      - name: Compare every encoding with VS Code's editor
+        timeout-minutes: 10
+        run: python3 tests/test_editor_parity.py
 
   spellcheck:
     name: Spell check (Japanese docs excluded)

@@ -37,6 +37,7 @@ extern int ignore_unused;
 #define IO_CanRead   1
 #define IO_CanWrite  2
 #define IO_Closed    4
+#define IO_PtyWritable 8	/* PATCH(fork, input backpressure) */
 
 #define TypeCalloc(type)    (type *) calloc((size_t) 1, sizeof(type))
 #define TypeCallocN(type,n) (type *) calloc((size_t) (n), sizeof(type))
@@ -44,7 +45,7 @@ extern int ignore_unused;
 #define SizeOf(v)        (sizeof(v) / sizeof(v[0]))
 
 int waitForOutput(int fd);
-int waitForInput(int fd1, int fd2, int timeout_ms);
+int waitForInput(int fd1, int fd2, int want_write2, int timeout_ms);
 int setWindowSize(int sfd, int dfd);
 int installHandler(int signum, void (*handler) (int));
 int copyTermios(int sfd, int dfd);
