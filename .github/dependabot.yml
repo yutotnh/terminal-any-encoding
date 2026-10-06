@@ -7,6 +7,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # TypeScript 7 has no compiler API in the "typescript" package
+      # anymore, which typescript-eslint needs (it supports up to 6.0).
+      # Drop this once typescript-eslint supports 7.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
 
   # Dependabot doesn't update .github/workflows/actions.lock, so its PRs
   # fail at startup until the lock is regenerated (see AGENTS.md). One
