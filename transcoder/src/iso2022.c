@@ -422,7 +422,9 @@ fromUtf8(unsigned char *b)
 		((b[1] & 0x3F) << 6) |
 		((b[2] & 0x3F)));
     else if ((b[0] & 0x78) == 0x70)
-	return (((b[0] & 0x03) << 18) |
+	/* PATCH(fork, utf-8): a 4-byte lead carries 3 bits; upstream masked
+	 * 2, so U+100000-U+10FFFF (lead 0xF4) became U+0000-U+FFFF. */
+	return (((b[0] & 0x07) << 18) |
 		((b[1] & 0x3F) << 12) |
 		((b[2] & 0x3F) << 6) |
 		((b[3] & 0x3F)));
