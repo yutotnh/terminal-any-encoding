@@ -401,7 +401,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
     "eslint": "^10.12.0",
-    "eslint-plugin-n": "^17.24.0",
+    "eslint-plugin-n": "^18.4.1",
     "glob": "^13.0.6",
     "globals": "^17.13.0",
     "mocha": "^11.8.0",
