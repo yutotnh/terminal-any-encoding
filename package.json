@@ -397,7 +397,7 @@
     "@types/node": "^24.19.1",
     "@types/vscode": "^1.73.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
+    "@typescript-eslint/parser": "^8.71.0",
     "@vscode/iconv-lite-umd": "0.7.1",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
