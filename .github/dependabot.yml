@@ -12,6 +12,10 @@ updates:
       # let code use APIs that VS Code 1.73 doesn't have (and vsce refuses
       # types newer than engines.vscode). See AGENTS.md.
       - dependency-name: "@types/vscode"
+      # Its major version follows .nvmrc's Node.js (see AGENTS.md); minor
+      # and patch updates still come.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
       # TypeScript 7 has no compiler API in the "typescript" package
       # anymore, which typescript-eslint needs (it supports up to 6.0).
       # Drop this once typescript-eslint supports 7.
