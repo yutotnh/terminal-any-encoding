@@ -1,6 +1,6 @@
 {
   "extension.title": "Terminal Any Encoding",
-  "extension.description": "Use non-UTF-8 character encodings (EUC-JP, Shift JIS, GBK, Big5-HKSCS, EUC-KR, and the rest of the 45 non-Unicode encodings VS Code natively supports) in the VS Code integrated terminal.",
+  "extension.description": "Use non-UTF-8 character encodings (Windows-1252, ISO-8859-1, Windows-1251, KOI8-R, Shift JIS, EUC-JP, GBK, Big5, EUC-KR, and the rest of the 45 non-Unicode encodings VS Code natively supports) in the VS Code integrated terminal.",
   "extension.category": "Terminal Any Encoding",
   "command.openTerminal.title": "Open Terminal with Encoding...",
   "command.openDefaultEncodingTerminal.title": "Open Terminal (Default Encoding)",

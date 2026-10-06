@@ -1,6 +1,6 @@
 {
   "extension.title": "Terminal Any Encoding",
-  "extension.description": "VS Code の統合ターミナルで UTF-8 以外の文字エンコーディング (EUC-JP, Shift JIS, GBK, Big5-HKSCS, EUC-KR など、VS Code が対応する Unicode 以外の45種類すべて) を扱えるようにする",
+  "extension.description": "VS Code の統合ターミナルで UTF-8 以外の文字エンコーディング (Windows-1252, ISO-8859-1, Windows-1251, KOI8-R, Shift JIS, EUC-JP, GBK, Big5, EUC-KR など、VS Code が対応する Unicode 以外の45種類すべて) を扱えるようにする",
   "extension.category": "Terminal Any Encoding",
   "command.openTerminal.title": "エンコーディングを指定してターミナルを開く...",
   "command.openDefaultEncodingTerminal.title": "既定のエンコーディングでターミナルを開く",
