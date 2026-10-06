@@ -8,6 +8,10 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
+      # Matches engines.vscode's lower bound on purpose: newer types would
+      # let code use APIs that VS Code 1.73 doesn't have (and vsce refuses
+      # types newer than engines.vscode). See AGENTS.md.
+      - dependency-name: "@types/vscode"
       # TypeScript 7 has no compiler API in the "typescript" package
       # anymore, which typescript-eslint needs (it supports up to 6.0).
       # Drop this once typescript-eslint supports 7.

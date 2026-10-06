@@ -65,6 +65,8 @@ bound, verify against multiple real versions via CI's `integration-test` job
 `npm run test:integration -- --vscode-version <version>`; see
 [CONTRIBUTING.md](CONTRIBUTING.md#running-tests) for its prerequisites)
 before settling on a value. The current lower bound is 1.73.0.
+`@types/vscode` stays at the lower bound, so code can't use newer APIs;
+Dependabot ignores it, so move it together with `engines.vscode`.
 
 Lowering `engines.vscode` also lowers the runtime Node.js inside the
 Extension Host (Node 16.14.2 for 1.73.0). `eslint-plugin-n` in
