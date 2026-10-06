@@ -4,62 +4,56 @@
 version: 'v0.0.2'
 workflows:
     '.github/workflows/build-transcoder.yml':
-        - 'actions/checkout@v4.4.0'
-        - 'actions/setup-node@v4.4.0'
-        - 'actions/upload-artifact@v4.6.2'
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-node@v7.0.0'
+        - 'actions/upload-artifact@v7.0.1'
     '.github/workflows/ci.yml':
-        - 'actions/checkout@v4.4.0'
-        - 'actions/setup-node@v4.4.0'
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-node@v7.0.0'
     '.github/workflows/release.yml':
-        - 'actions/attest-build-provenance@v1.4.4'
-        - 'actions/checkout@v4.4.0'
-        - 'actions/download-artifact@v4.3.0'
-        - 'actions/setup-node@v4.4.0'
-        - 'actions/upload-artifact@v4.6.2'
-        - 'azure/login@v2.3.1'
+        - 'actions/attest-build-provenance@v4.2.2'
+        - 'actions/checkout@v7.0.1'
+        - 'actions/download-artifact@v8.0.1'
+        - 'actions/setup-node@v7.0.0'
+        - 'actions/upload-artifact@v7.0.1'
+        - 'azure/login@v3.1.0'
     '.github/workflows/upstream-watch.yml':
-        - 'actions/checkout@v4.4.0'
+        - 'actions/checkout@v7.0.1'
 dependencies:
-    'actions/attest-build-provenance@36fa7d009e22618ca7cd599486979b8150596c74':
-        ref: 'predicate@1.1.4'
-        commit: 'sha1-36fa7d009e22618ca7cd599486979b8150596c74'
-        owner_id: 44036562
-        repo_id: 760702757
-    'actions/attest-build-provenance@v1.4.4':
-        ref: 'v1.4.4'
-        commit: 'sha1-ef244123eb79f2f7a7e75d99086184180e6d0018'
+    'actions/attest-build-provenance@v4.2.2':
+        ref: 'v4.2.2'
+        commit: 'sha1-4d101475d8b20a2381f78447822ac1eab6504dd8'
         owner_id: 44036562
         repo_id: 760702757
         uses:
-            - 'actions/attest-build-provenance@36fa7d009e22618ca7cd599486979b8150596c74'
-            - 'actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d'
-    'actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d':
-        ref: 'v1.4.1'
-        commit: 'sha1-67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d'
+            - 'actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d'
+    'actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d':
+        ref: 'v4.2.1'
+        commit: 'sha1-508db95dd578ae2727ebd6217d5ba78e4fbda05d'
         owner_id: 44036562
         repo_id: 760701061
-    'actions/checkout@v4.4.0':
-        ref: 'v4.4.0'
-        commit: 'sha1-11d5960a326750d5838078e36cf38b85af677262'
+    'actions/checkout@v7.0.1':
+        ref: 'v7.0.1'
+        commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
         owner_id: 44036562
         repo_id: 197814629
-    'actions/download-artifact@v4.3.0':
-        ref: 'v4.3.0'
-        commit: 'sha1-d3f86a106a0bac45b974a628896c90dbdf5c8093'
+    'actions/download-artifact@v8.0.1':
+        ref: 'v8.0.1'
+        commit: 'sha1-3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
         owner_id: 44036562
         repo_id: 192626254
-    'actions/setup-node@v4.4.0':
-        ref: 'v4.4.0'
-        commit: 'sha1-49933ea5288caeca8642d1e84afbd3f7d6820020'
+    'actions/setup-node@v7.0.0':
+        ref: 'v7.0.0'
+        commit: 'sha1-820762786026740c76f36085b0efc47a31fe5020'
         owner_id: 44036562
         repo_id: 189476904
-    'actions/upload-artifact@v4.6.2':
-        ref: 'v4.6.2'
-        commit: 'sha1-ea165f8d65b6e75b540449e92b4886f43607fa02'
+    'actions/upload-artifact@v7.0.1':
+        ref: 'v7.0.1'
+        commit: 'sha1-043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
         owner_id: 44036562
         repo_id: 192625955
-    'azure/login@v2.3.1':
-        ref: 'v2.3.1'
-        commit: 'sha1-7184910d9eb2b1c5e48f7073824a90609bb9b6d6'
+    'azure/login@v3.1.0':
+        ref: 'v3.1.0'
+        commit: 'sha1-a641126d1b8aa4d1fa005f4f92df94a3a4c4c906'
         owner_id: 6844498
         repo_id: 210798615
