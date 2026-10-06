@@ -719,7 +719,11 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		i = G2(is)->reverse(ucode, G2(is));
 		if (i >= 0) {
 		    int wrote = 0;
-		    switch (GR(is)->type) {
+		    /* PATCH(fork, single shifts): upstream switched on GR's type
+		     * here and below, so a G2/G3 set of another size than GR (EUC-JP's
+		     * 1-byte JIS X 0201 katakana in G2, next to 2-byte JIS X 0208 in
+		     * GR) was never written: typed half-width katakana was dropped. */
+		    switch (G2(is)->type) {
 		    case T_94:
 		    case T_96:
 		    case T_128:
@@ -762,7 +766,7 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		i = G3(is)->reverse(ucode, G3(is));
 		if (i >= 0) {
 		    int wrote = 0;
-		    switch (GR(is)->type) {
+		    switch (G3(is)->type) {
 		    case T_94:
 		    case T_96:
 		    case T_128:
