@@ -406,7 +406,7 @@
     "glob": "^13.0.6",
     "mocha": "^11.8.0",
     "ovsx": "^1.2.0",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.9",
     "typescript": "^5.4.0"
   },
   "enabledApiProposals": [
