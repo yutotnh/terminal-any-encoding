@@ -512,6 +512,38 @@ def run_inverted_tree_case() -> tuple[bool, str]:
     return ok, f"started process runs {exe}, its children: {child_exes}"
 
 
+def run_quick_exit_case(runs: int = 2000) -> tuple[bool, str]:
+    """A command that prints and exits at once still shows its output. The
+    converter used to die with the shell's SIGHUP when it ran late (about 1
+    in 300 runs with everything on one CPU), so this runs on one CPU, many
+    times."""
+    cpu = min(os.sched_getaffinity(0))
+    lost = 0
+    for _ in range(runs):
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.sched_setaffinity(0, {cpu})
+            os.execv(str(LUIT), ["luit", "-encoding", "euc-jp-2007", "--",
+                                 "sh", "-c", "printf 'out:\\306\\374\\n'; exit 3"])
+        out = b""
+        while True:
+            r, _, _ = select.select([fd], [], [], 5)
+            if not r:
+                break
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            out += data
+        os.waitpid(pid, 0)
+        os.close(fd)
+        if "out:日".encode() not in out:
+            lost += 1
+    return lost == 0, f"output lost in {lost} of {runs} runs"
+
+
 def run_slow_reader_case() -> tuple[bool, str]:
     """A paste isn't lost when the program reads it later than it arrives.
     luit's writes to the pty are non-blocking, and whatever didn't fit used
@@ -947,6 +979,7 @@ def main() -> int:
     # (name, function, needs Linux: /proc, or the Linux-only tab title)
     for name, fn, linux_only in [
             ("inverted (as started by a terminal)", run_inverted_tree_case, True),
+            ("a command that prints and exits at once shows its output", run_quick_exit_case, True),
             ("inverted on Linux, classic elsewhere, shell runs either way", run_layout_case, False),
             ("a paste survives a program that reads it late", run_slow_reader_case, False),
             ("resize reaches the shell", run_resize_case, False),

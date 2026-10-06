@@ -246,10 +246,14 @@ controlling terminal is its stdin (`canInvert()`), luit inverts the tree
    that fails, as it does on macOS (`ENOTTY`), nothing has
    changed yet and luit keeps the classic layout (`-v` says why).
 2. It forks the converter and detaches it (double fork, so it's not a child
-   of the shell). The converter calls `setsid()` and takes the outer
-   terminal as its controlling terminal (`TIOCSCTTY`), so it gets SIGWINCH
-   when VS Code resizes the terminal and SIGHUP when it closes, as luit
-   always did.
+   of the shell). The helper in between calls `setsid()` first, so the
+   converter is never in the shell's process group: when the shell exits it
+   sends that group SIGHUP, and a converter that hadn't left it yet (it can
+   run late on a busy machine) died before reading anything, so a command
+   that printed and exited at once showed nothing. The converter calls
+   `setsid()` again and takes the outer terminal as its controlling terminal
+   (`TIOCSCTTY`), so it gets SIGWINCH when VS Code resizes the terminal and
+   SIGHUP when it closes, as luit always did.
 3. It takes the inner pty as controlling terminal and execs the shell, so the
    pid VS Code knows is the shell's. Rejection reports carry that pid.
 

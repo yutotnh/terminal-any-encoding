@@ -1378,7 +1378,15 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	ExitFailure();
     }
     if (helper == 0) {
-	pid_t converter = fork();
+	pid_t converter;
+	/* Out of the shell's process group before the shell can exist: the
+	 * shell takes the inner pty with its group as the foreground one,
+	 * and when it exits (a session leader), that group gets SIGHUP. A
+	 * converter still in it then (it can run late, on a busy machine)
+	 * died before reading anything, so a command that printed and
+	 * exited at once showed nothing. */
+	(void) setsid();
+	converter = fork();
 	if (converter != 0)
 	    _exit(converter < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
 	/* the converter, now an orphan: takes the outer terminal, which
