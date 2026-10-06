@@ -7,6 +7,41 @@ import { findOnPath, useTestShell } from "./testShell";
 
 const EXTENSION_ID = "yutotnh.terminal-any-encoding";
 
+/**
+ * What terminals print while a test runs, and when terminals open, print
+ * and tasks end, for the failure message: a task's output once went
+ * missing on macOS CI, rarely, and didn't reproduce.
+ */
+function recordOutput(): {
+  readonly text: string;
+  describe(): string;
+  dispose(): void;
+} {
+  const start = Date.now();
+  const at = () => Date.now() - start;
+  const events: string[] = [];
+  let text = "";
+  const subs = [
+    vscode.window.onDidWriteTerminalData((e) => {
+      text += e.data;
+      events.push(`data@${at()}ms:${e.terminal.name}`);
+    }),
+    vscode.window.onDidOpenTerminal((t) =>
+      events.push(`open@${at()}ms:${t.name}`),
+    ),
+    vscode.tasks.onDidEndTaskProcess((e) =>
+      events.push(`end@${at()}ms:${e.execution.task.name}:${e.exitCode}`),
+    ),
+  ];
+  return {
+    get text() {
+      return text;
+    },
+    describe: () => JSON.stringify({ output: text, events }),
+    dispose: () => subs.forEach((s) => s.dispose()),
+  };
+}
+
 /** Runs a task and resolves with its process's exit code */
 async function runTask(task: vscode.Task): Promise<number | undefined> {
   const exitCode = new Promise<number | undefined>((resolve) => {
@@ -33,10 +68,7 @@ suite("terminalAnyEncoding tasks", function () {
     const ext = vscode.extensions.getExtension<TestExports>(EXTENSION_ID);
     const exports = await ext!.activate();
     const restoreShell = await useTestShell("/bin/sh");
-    let output = "";
-    const dataSub = vscode.window.onDidWriteTerminalData((e) => {
-      output += e.data;
-    });
+    const output = recordOutput();
     try {
       const definition = {
         type: "terminalAnyEncoding",
@@ -57,10 +89,10 @@ suite("terminalAnyEncoding tasks", function () {
           built.execution,
         ),
       );
-      assert.strictEqual(exitCode, 3, JSON.stringify(output));
-      assert.ok(output.includes("out:日"), JSON.stringify(output));
+      assert.strictEqual(exitCode, 3, output.describe());
+      assert.ok(output.text.includes("out:日"), output.describe());
     } finally {
-      dataSub.dispose();
+      output.dispose();
       for (const t of vscode.window.terminals) t.dispose();
       await restoreShell();
     }
@@ -70,27 +102,24 @@ suite("terminalAnyEncoding tasks", function () {
     const ext = vscode.extensions.getExtension<TestExports>(EXTENSION_ID);
     await ext!.activate();
     const restoreShell = await useTestShell("/bin/sh");
-    let output = "";
-    const dataSub = vscode.window.onDidWriteTerminalData((e) => {
-      output += e.data;
-    });
+    const output = recordOutput();
     try {
       const task = (await vscode.tasks.fetchTasks()).find(
         (t) => t.name === CONFIGURED_TASK.label,
       );
       assert.ok(task, "VS Code didn't pick up the task from tasks.json");
       const exitCode = await runTask(task);
-      assert.strictEqual(exitCode, 0, JSON.stringify(output));
+      assert.strictEqual(exitCode, 0, output.describe());
       // Each arg reached the script as one word (quoted for the shell),
       // $ENC_TEST, which VS Code leaves unquoted, was expanded from
       // options.env by the shell, and 日本 was converted to EUC-JP on the
       // way in (unconverted UTF-8 would come back garbled).
       assert.ok(
-        output.includes("cfg:本:two words:from-env:日本"),
-        JSON.stringify(output),
+        output.text.includes("cfg:本:two words:from-env:日本"),
+        output.describe(),
       );
     } finally {
-      dataSub.dispose();
+      output.dispose();
       for (const t of vscode.window.terminals) t.dispose();
       await restoreShell();
     }
@@ -105,10 +134,7 @@ suite("terminalAnyEncoding tasks", function () {
     const ext = vscode.extensions.getExtension<TestExports>(EXTENSION_ID);
     const exports = await ext!.activate();
     const restoreShell = await useTestShell(pwshPath!);
-    let output = "";
-    const dataSub = vscode.window.onDidWriteTerminalData((e) => {
-      output += e.data;
-    });
+    const output = recordOutput();
     try {
       for (const [name, definition, expectedExit, expectedOutput] of [
         [
@@ -141,11 +167,11 @@ suite("terminalAnyEncoding tasks", function () {
             built.execution,
           ),
         );
-        assert.strictEqual(exitCode, expectedExit, JSON.stringify(output));
-        assert.ok(output.includes(expectedOutput), JSON.stringify(output));
+        assert.strictEqual(exitCode, expectedExit, output.describe());
+        assert.ok(output.text.includes(expectedOutput), output.describe());
       }
     } finally {
-      dataSub.dispose();
+      output.dispose();
       for (const t of vscode.window.terminals) t.dispose();
       await restoreShell();
     }
