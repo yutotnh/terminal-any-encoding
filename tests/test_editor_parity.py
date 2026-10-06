@@ -49,6 +49,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -180,30 +181,44 @@ def luit_encode(enc: str, text: str, expect_len: int) -> tuple[bytes, bool]:
             os._exit(1)
         time.sleep(0.5)
         data = text.encode("utf-8")
+        # Blocking writes from a thread: each one goes through as soon as
+        # the pty takes it. Waiting in select() for writability instead was
+        # 100 times slower on macOS, whose ptys have small buffers.
+        written = threading.Event()
+
+        def write_all() -> None:
+            view = memoryview(data)
+            pos = 0
+            try:
+                while pos < len(view):
+                    pos += os.write(fd, view[pos:pos + 65536])
+            except OSError:
+                pass
+            written.set()
+
+        writer = threading.Thread(target=write_all, daemon=True)
+        writer.start()
         bell = False
-        pos = 0
         size, last_change = -1, time.time()
         while True:
-            r, w, _ = select.select([fd], [fd] if pos < len(data) else [], [], 0.2)
+            r, _, _ = select.select([fd], [], [], 0.1)
             if r:
                 try:
                     if b"\a" in os.read(fd, 65536):
                         bell = True
                 except OSError:
                     break
-            if w:
-                pos += os.write(fd, data[pos:pos + 4096])
-                last_change = time.time()
             now_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
-            if now_size != size:
+            if now_size != size or not written.is_set():
                 size, last_change = now_size, time.time()
             # Done when everything arrived, or when nothing has moved for a
             # while after the last write (rejected input never arrives).
-            if pos >= len(data) and (size >= expect_len or time.time() - last_change > 1.5):
+            if written.is_set() and (size >= expect_len or time.time() - last_change > 1.5):
                 time.sleep(0.2)
                 break
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
+        writer.join()
         os.close(fd)
         got = open(out_path, "rb").read() if os.path.exists(out_path) else b""
     return got, bell

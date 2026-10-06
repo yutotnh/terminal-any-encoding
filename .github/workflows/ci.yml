@@ -46,6 +46,7 @@ jobs:
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
       - name: Compare every encoding with VS Code's editor
+        timeout-minutes: 10
         run: python3 tests/test_editor_parity.py
       - name: shellcheck
         run: |
@@ -70,6 +71,7 @@ jobs:
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
       - name: Compare every encoding with VS Code's editor
+        timeout-minutes: 10
         run: python3 tests/test_editor_parity.py
 
   spellcheck:

@@ -47,6 +47,7 @@ jobs:
       # Built natively in Alpine, whose compiler targets musl, on a runner of
       # the same architecture, so every binary also runs the test suite.
       - name: Build and test in Alpine
+        timeout-minutes: 20
         env:
           # Alpine 3.24.2 (multi-arch index), pinned by digest
           IMAGE: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
@@ -96,6 +97,7 @@ jobs:
           bash transcoder/scripts/build.sh
           strip transcoder/src/luit
       - name: Verify
+        timeout-minutes: 15
         run: |
           python3 tests/test_encodings.py
           python3 tests/test_editor_parity.py
