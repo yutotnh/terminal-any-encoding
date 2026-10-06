@@ -515,14 +515,16 @@ def run_inverted_tree_case() -> tuple[bool, str]:
 def run_quick_exit_case(runs: int = 2000) -> tuple[bool, str]:
     """A command that prints and exits at once still shows its output. The
     converter used to die with the shell's SIGHUP when it ran late (about 1
-    in 300 runs with everything on one CPU), so this runs on one CPU, many
-    times."""
-    cpu = min(os.sched_getaffinity(0))
+    in 300 runs with everything on one CPU), so this runs on one CPU (where
+    the OS lets it pick one), many times."""
+    pin = hasattr(os, "sched_setaffinity")
+    cpu = min(os.sched_getaffinity(0)) if pin else 0
     lost = 0
     for _ in range(runs):
         pid, fd = pty.fork()
         if pid == 0:
-            os.sched_setaffinity(0, {cpu})
+            if pin:
+                os.sched_setaffinity(0, {cpu})
             os.execv(str(LUIT), ["luit", "-encoding", "euc-jp-2007", "--",
                                  "sh", "-c", "printf 'out:\\306\\374\\n'; exit 3"])
         out = b""
@@ -979,7 +981,7 @@ def main() -> int:
     # (name, function, needs Linux: /proc, or the Linux-only tab title)
     for name, fn, linux_only in [
             ("inverted (as started by a terminal)", run_inverted_tree_case, True),
-            ("a command that prints and exits at once shows its output", run_quick_exit_case, True),
+            ("a command that prints and exits at once shows its output", run_quick_exit_case, False),
             ("inverted on Linux, classic elsewhere, shell runs either way", run_layout_case, False),
             ("a paste survives a program that reads it late", run_slow_reader_case, False),
             ("resize reaches the shell", run_resize_case, False),
