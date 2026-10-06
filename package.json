@@ -425,5 +425,8 @@
         "terminalAnyEncoding.shellProfile.osx"
       ]
     }
+  },
+  "overrides": {
+    "serialize-javascript": "^7.1.2"
   }
 }
