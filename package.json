@@ -400,7 +400,7 @@
     "@typescript-eslint/parser": "^7.0.0",
     "@vscode/iconv-lite-umd": "0.7.1",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.9.2",
+    "@vscode/vsce": "^4.0.0",
     "eslint": "^8.57.0",
     "eslint-plugin-n": "^16.6.2",
     "glob": "^13.0.6",
