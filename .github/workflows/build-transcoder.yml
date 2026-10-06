@@ -43,7 +43,7 @@ jobs:
             platform: linux/arm/v7
             format: "ELF 32-bit LSB .*ARM, EABI5"
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       # Built natively in Alpine, whose compiler targets musl, on a runner of
       # the same architecture, so every binary also runs the test suite.
       - name: Build and test in Alpine
@@ -65,7 +65,7 @@ jobs:
               python3 tests/test_encodings.py
               python3 tests/test_editor_parity.py
             '
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: transcoder-linux-${{ matrix.arch }}
           path: transcoder/src/luit
@@ -84,11 +84,11 @@ jobs:
           - arch: arm64
             runner: macos-15
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       - name: Dependencies (Homebrew)
         run: brew install autoconf automake
       # The editor-parity test compares with iconv-lite.
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
@@ -101,7 +101,7 @@ jobs:
         run: |
           python3 tests/test_encodings.py
           python3 tests/test_editor_parity.py
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: transcoder-darwin-${{ matrix.arch }}
           path: transcoder/src/luit

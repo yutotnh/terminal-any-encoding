@@ -15,9 +15,9 @@ jobs:
     name: Conversion table reproducibility check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       # The tables come from the @vscode/iconv-lite-umd devDependency.
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
@@ -28,7 +28,7 @@ jobs:
     name: Native build + test suite
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       # xfonts-encodings installs X11's ".enc" tables, which upstream luit
       # would prefer over the fork's built-in ones (see luit.c's
       # lookup_order); the tests then check that ours still win.
@@ -37,7 +37,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential autoconf xfonts-encodings
       # The editor-parity test compares with iconv-lite.
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
@@ -59,10 +59,10 @@ jobs:
     name: Native build + test suite (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       - name: Install build dependencies
         run: brew install autoconf
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
@@ -78,8 +78,8 @@ jobs:
     name: Spell check (Japanese docs excluded)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - run: npx --yes cspell@8 lint --no-progress "**/*.{ts,js,c,h,md}" --exclude "docs/**/*.md" --exclude "**/*.ja.md"
@@ -88,8 +88,8 @@ jobs:
     name: TypeScript lint + unit tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
@@ -108,8 +108,8 @@ jobs:
       matrix:
         vscode-version: ["1.73.0", "1.85.0", "1.94.0", "stable"]
     steps:
-      - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - name: Install build dependencies
@@ -129,8 +129,8 @@ jobs:
     name: VS Code integration tests (macOS, stable)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version-file: ./.nvmrc
       - name: Install build dependencies
