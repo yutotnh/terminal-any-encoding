@@ -30,7 +30,7 @@ cspell.json
 .prettierignore
 .nvmrc
 tsconfig.json
-.eslintrc*
+eslint.config.mjs
 node_modules/**
 src/**
 out/test/**

@@ -68,7 +68,7 @@ before settling on a value. The current lower bound is 1.73.0.
 
 Lowering `engines.vscode` also lowers the runtime Node.js inside the
 Extension Host (Node 16.14.2 for 1.73.0). `eslint-plugin-n` in
-`.eslintrc.json` guards `src/**/*.ts` against this runtime floor (update the
+`eslint.config.mjs` guards `src/**/*.ts` against this runtime floor (update the
 version there too when you change the lower bound). However, it only looks at
 global references and module members, so it can't catch misuse of prototype
 methods like `Array#at` (`tsconfig.json`'s `"lib"` catches that separately).

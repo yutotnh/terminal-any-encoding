@@ -393,21 +393,22 @@
     "package:local": "bash transcoder/scripts/build.sh && mkdir -p transcoder/bin && cp transcoder/src/luit transcoder/bin/luit && npm run package"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.19.1",
     "@types/vscode": "^1.73.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
     "@vscode/iconv-lite-umd": "0.7.1",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
-    "eslint": "^8.57.0",
-    "eslint-plugin-n": "^16.6.2",
+    "eslint": "^10.12.0",
+    "eslint-plugin-n": "^18.4.1",
     "glob": "^13.0.6",
+    "globals": "^17.13.0",
     "mocha": "^11.8.0",
     "ovsx": "^1.2.0",
     "prettier": "^3.9.9",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.71.1"
   },
   "enabledApiProposals": [
     "terminalDataWriteEvent"
