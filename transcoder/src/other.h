@@ -82,8 +82,8 @@ typedef struct {
  * out-of-range rows for the IBM-extension lead bytes (0xFA-0xFC) and
  * NEC-selected-IBM bytes (0xED-0xEE) -- see docs/transcoder-design.md.
  * aux_cp932 instead does a flat 2-byte-code -> Unicode table lookup
- * (same shape as aux_hkscs), sourced directly from ICU's
- * ibm-943_P15A-2003 converter, so no coordinate transform is needed. */
+ * (same shape as aux_hkscs), generated from VS Code's Shift JIS (CP932)
+ * table, so no coordinate transform is needed. */
 typedef struct {
     FontMapPtr mapping;
     FontMapReversePtr reverse;

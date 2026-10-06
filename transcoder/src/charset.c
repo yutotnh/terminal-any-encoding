@@ -90,7 +90,7 @@ static FontencCharsetRec fontencCharsets[] =
     {"KSC 5601",       T_9494,  'C', "ksc5601.1987-0",   0x0000, NULL, NULL},
     {"JIS X 0212",     T_9494,  'D', "jisx0212.1990-0",  0x0000, NULL, NULL},
 
-    /* PATCH(fork, euc-jp-2007): WHATWG/ICU "euc-jp-2007" G1 plane. A superset of
+    /* PATCH(fork, euc-jp-2007): EUC-JP's G1 plane as VS Code reads it. A superset of
      * stock "JIS X 0208" above (NEC row 13 + IBM extension rows added), so it
      * gets a distinct xlfd name rather than overwriting the stock table -
      * existing eucJP/SJIS behaviour is unaffected. See builtin_ja.c. */
@@ -125,15 +125,14 @@ static FontencCharsetRec fontencCharsets[] =
     {"CP 437",         T_128,   0,   "ibm-cp437",        0x80,   NULL, NULL},
     {"CP 850",         T_128,   0,   "ibm-cp850",        0x80,   NULL, NULL},
     /* PATCH(fork, encodings): stock's xlfd "ibm-cp852" had no data and was
-     * unmapped (confirmed by measurement). Replaced with our own ICU-derived table. */
+     * unmapped (confirmed by measurement). Replaced with our own generated table. */
     {"CP 852",         T_128,   0,   "cp852-direct-0",   0x80,   NULL, NULL},
     /* PATCH(fork, encodings): the following 3 entries are new additions, since
      * stock luit had no corresponding Encoding/charset entry at all. */
     {"CP 857",         T_128,   0,   "cp857-direct-0",   0x80,   NULL, NULL},
     {"CP 1125",         T_128,   0,   "cp1125-direct-0",  0x80,   NULL, NULL},
     {"MAC ROMAN",       T_128,   0,   "macroman-direct-0", 0x80,   NULL, NULL},
-    /* fork-local: KOI8-T has no ICU converter; its table comes from
-     * iconv-lite (see docs/transcoder-design.md). */
+    /* PATCH(fork, encodings): KOI8-T, see docs/transcoder-design.md. */
     {"KOI8-T",          T_128,   0,   "koi8t-direct-0",   0x80,   NULL, NULL},
     {"CP 865",         T_128,   0,   "ibm-cp865",        0x80,   NULL, NULL},
     {"CP 866",         T_128,   0,   "ibm-cp866",        0x80,   NULL, NULL},
@@ -264,7 +263,7 @@ FontencCharsetRecode(unsigned int n, const CharsetRec * self)
     /* PATCH(fork): luitMapCodeValueFound()/luitReverseFound() (luitconv.c)
      * are USE_ICONV-backend-only; under !USE_ICONV (--enable-fontenc)
      * they're not even declared in luitconv.h. The fork-local charsets
-     * (isFallbackManagedXlfd) assume ICU-generated tables, and the fontenc
+     * (isFallbackManagedXlfd) assume the generated tables, and the fontenc
      * (.enc file) side has no corresponding data, so this branch can't
      * return a meaningful result under the fontenc backend anyway. To
      * avoid breaking the build, fall back to the upstream-equivalent

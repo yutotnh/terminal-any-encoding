@@ -56,11 +56,13 @@ jobs:
         run: |
           docker run --rm --platform "$PLATFORM" -e ARCH -e FORMAT \
             -v "$PWD":/src -w /src "$IMAGE" sh -euc '
-              apk add --no-cache build-base autoconf bash file python3
+              apk add --no-cache build-base autoconf bash file python3 nodejs npm
+              npm ci --ignore-scripts
               bash transcoder/scripts/build.sh --musl --arch "$ARCH"
               file transcoder/src/luit | grep -E "$FORMAT"
               file transcoder/src/luit | grep -E "static(ally|-pie) linked"
               python3 tests/test_encodings.py
+              python3 tests/test_editor_parity.py
             '
       - uses: actions/upload-artifact@v4.6.2
         with:
@@ -84,14 +86,19 @@ jobs:
       - uses: actions/checkout@v4.4.0
       - name: Dependencies (Homebrew)
         run: brew install autoconf automake
+      # The editor-parity test compares with iconv-lite.
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
       - name: Build (dynamically linked, since macOS can't statically link libSystem)
         run: |
           bash transcoder/scripts/build.sh
           strip transcoder/src/luit
       - name: Verify
         run: |
-          printf '\xfc\xe2' | transcoder/src/luit -c -encoding euc-jp-2007 | xxd
           python3 tests/test_encodings.py
+          python3 tests/test_editor_parity.py
       - uses: actions/upload-artifact@v4.6.2
         with:
           name: transcoder-darwin-${{ matrix.arch }}

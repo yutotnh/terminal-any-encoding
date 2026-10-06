@@ -781,8 +781,8 @@ initializeBuiltInTable(LuitConv * data,
 	    /* PATCH(fork): a fork-generated row can carry
 	     * BUILTIN_DECODE_ONLY in its target (luitconv.h): decode it as
 	     * usual, but keep it out of the reverse index, so that encoding a
-	     * code point with several source bytes picks ICU's choice instead
-	     * of whichever duplicate bsearch() lands on. Upstream tables never
+	     * code point with several source bytes sends what VS Code saves
+	     * instead of whichever duplicate bsearch() lands on. Upstream tables never
 	     * set this bit (Unicode stops at 0x10FFFF). */
 	    unsigned target = builtIn->table[n].target;
 	    int decode_only = (target & BUILTIN_DECODE_ONLY) != 0;

@@ -2,8 +2,8 @@
 
 ## Development Environment Setup
 
-Recommended: use `.devcontainer/` (it comes with a pinned ICU version, the
-musl cross-toolchain, and Node.js already set up).
+Recommended: use `.devcontainer/` (it comes with the musl cross-toolchain
+and Node.js already set up).
 
 To set things up manually, you need:
 
@@ -11,10 +11,6 @@ To set things up manually, you need:
   development and CI, not the runtime Node.js inside the Extension Host —
   see [AGENTS.md](AGENTS.md#nodejs-version) for that distinction)
 - Python 3 (for the table generation pipeline and test runner)
-- ICU (the `uconv` command. Pin the version to match the devcontainer — the
-  tables depend on the ICU version, so don't bump it casually)
-- glibc's `iconv` command with its KOI8-T module (standard on glibc
-  distributions; table generation cross-checks KOI8-T against it)
 - For the statically linked distribution build (`build.sh --musl`), either
   Docker (build in an Alpine container, as CI does) or a musl
   cross-toolchain (e.g. `x86_64-linux-musl-gcc`, set up in the devcontainer)
@@ -28,8 +24,8 @@ Then run `npm install`.
   (`.prettierignore` already excludes it from Prettier).
 - **Don't hand-edit the generated conversion tables**
   (`transcoder/src/builtin_ja.c` and similar). Regenerate them with
-  `tools/gen-tables/gen_tables.py` (after `npm install`: KOI8-T's table comes
-  from iconv-lite, the rest from ICU). To change a table, edit
+  `tools/gen-tables/gen_tables.py` (after `npm install`: the tables come from
+  iconv-lite, the library VS Code decodes files with). To change a table, edit
   `tools/gen-tables/converters.json`, regenerate, and update
   `tools/gen-tables/golden/tables.sha256` as well.
 - Design rationale and non-obvious implementation details are recorded in
@@ -58,12 +54,16 @@ npm run test:integration
 #  distribution build)
 bash transcoder/scripts/build.sh          # native (development)
 python3 tests/test_encodings.py
+# Every byte sequence and character of every encoding against VS Code's
+# editor (iconv-lite; needs npm install). In parallel, about 10 seconds.
+python3 tests/test_editor_parity.py
 
 # Regression check against the distribution build (a static musl binary).
 # There have been cases where something worked natively but broke in the
 # static build, so always verify this too.
 bash transcoder/scripts/build.sh --musl
 python3 tests/test_encodings.py
+python3 tests/test_editor_parity.py
 
 # Reproducibility check for the conversion tables
 python3 tools/gen-tables/gen_tables.py --check

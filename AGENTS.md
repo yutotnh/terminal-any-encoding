@@ -13,17 +13,20 @@ to put in CONTRIBUTING.md.
 formatter on `transcoder/`, regenerate tables instead of hand-editing). On
 top of that:
 
-- The expected ICU version is recorded in two places: `icu_version_expected`
-  in `tools/gen-tables/converters.json` and `ICU_VERSION_PIN` in
-  `.devcontainer/setup.sh`. Change them together.
+- Every table comes from the `iconv-lite` devDependency, the library VS
+  Code decodes and encodes files with, pinned to an exact version. Keep it
+  at the version VS Code ships: a different one can make the terminal and
+  the editor disagree. Its version is part of the generated
+  `builtin_ja.c`, so a Dependabot bump fails `gen-tables-check` until you
+  regenerate the tables and update the version in `THIRD-PARTY-NOTICES.md`.
 - CI's `gen-tables-check` job runs `gen_tables.py --check` against
   `tools/gen-tables/golden/tables.sha256`, so a regenerated table without an
   updated hash fails CI.
-- KOI8-T's table comes from the `iconv-lite` devDependency (ICU has no
-  converter for it), pinned to an exact version. Its version is part of the
-  generated `builtin_ja.c`, so a Dependabot bump fails `gen-tables-check`
-  until you regenerate the tables (generation also re-checks KOI8-T against
-  Python and glibc) and update the version in `THIRD-PARTY-NOTICES.md`.
+- `tests/test_editor_parity.py` checks every byte sequence and every
+  character of every encoding against iconv-lite. Its few intended
+  differences (the wave dash, EUC-JP's ～ and № when typed, C1 controls,
+  GB18030's unassigned 4-byte ranges) are listed at its top; anything else
+  that differs is a bug.
 - Dependabot does not track luit's upstream (it's C code).
   `.github/workflows/upstream-watch.yml` checks weekly and files an issue.
   The fork's changes are the diff between `transcoder/vendor/luit-upstream/`

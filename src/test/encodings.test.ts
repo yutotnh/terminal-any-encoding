@@ -94,7 +94,7 @@ test("Chinese, Korean, and single-byte encodings are included", () => {
   }
 });
 
-test("KOI8-T is offered (its table comes from iconv-lite, not ICU)", () => {
+test("KOI8-T is offered", () => {
   assert.ok(isKnownEncoding("koi8t"));
 });
 

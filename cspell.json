@@ -5,7 +5,6 @@
     "luit",
     "fullwidth",
     "luitconv",
-    "uconv",
     "gconv",
     "fontenc",
     "localedef",

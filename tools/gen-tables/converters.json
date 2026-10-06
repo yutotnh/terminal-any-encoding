@@ -1,5 +1,5 @@
 {
-  "$comment": "The transcoder's built-in charset tables, generated from iconv-lite (pinned by package-lock.json), the library VS Code decodes and encodes files with. A table named like one of upstream's (iso8859-*, koi8-*, ...) replaces it. encode_corrections: what a character is sent as where iconv-lite's encoder doesn't give back the bytes it was decoded from.",
+  "$comment": "The transcoder's built-in charset tables, generated from iconv-lite, the library VS Code decodes and encodes files with, in the package and version VS Code ships (@vscode/iconv-lite-umd, pinned by package-lock.json). A table named like one of upstream's (iso8859-*, koi8-*, ...) replaces it. encode_corrections: what a character is sent as where iconv-lite's encoder doesn't give back the bytes it was decoded from.",
   "encode_corrections": {
     "eucjp": {
       "U+FF5E": "a1c1",

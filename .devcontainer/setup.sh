@@ -1,25 +1,14 @@
 #!/usr/bin/env bash
-# Initial devcontainer setup. The ICU version is pinned so the generated
-# conversion tables are reproducible.
-# Keep the pinned version in sync with icu_version_expected in tools/gen-tables/converters.json.
+# Initial devcontainer setup.
 set -euo pipefail
-
-ICU_VERSION_PIN="78.2"  # keep in sync with tools/gen-tables/converters.json
 
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   build-essential \
   autoconf automake \
-  libicu-dev icu-devtools \
   python3 python3-pip \
   file \
   shellcheck
-
-installed_icu="$(icuinfo 2>/dev/null | grep -m1 -oP '(?<=<param name="version">)[^<]+' || echo unknown)"
-if [ "$installed_icu" != "$ICU_VERSION_PIN" ]; then
-  echo "Warning: the ICU from apt is ${installed_icu}, which differs from the pin (${ICU_VERSION_PIN})." >&2
-  echo "The conversion tables may have changed, so always verify with tools/gen-tables/gen_tables.py --check after generating." >&2
-fi
 
 # musl cross toolchains for local static builds (`build.sh --musl`). build.sh
 # needs <triple>-gcc/<triple>-strip, which Ubuntu's musl-tools doesn't provide

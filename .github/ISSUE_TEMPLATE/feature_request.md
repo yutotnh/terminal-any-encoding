@@ -18,8 +18,8 @@ assignees: ""
 
 ## Notes
 
-<!-- Conversion tables come from ICU (or, for KOI8-T, from iconv-lite, the
-     library VS Code uses) for licensing and reproducibility reasons; an
-     encoding neither has can't be added. See "Policy: ICU as the source for
-     conversion tables" and "Deliberately unsupported" in
-     docs/transcoder-design.md -->
+<!-- The terminal offers the encodings VS Code's editor offers, with the
+     conversion tables of iconv-lite, the library the editor uses, so both
+     show the same text. An encoding VS Code doesn't have can't be added.
+     See "Policy: iconv-lite as the source for conversion tables" and
+     "Deliberately unsupported" in docs/transcoder-design.md -->

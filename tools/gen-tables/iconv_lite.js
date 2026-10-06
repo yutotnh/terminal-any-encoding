@@ -1,6 +1,7 @@
 // iconv-lite, as tools/gen-tables/gen_tables.py uses it: VS Code decodes and
-// encodes files with this library, so tables built from it make the
-// terminal show what the editor shows.
+// encodes files with this library (as @vscode/iconv-lite-umd, the package
+// and version used here), so tables built from it make the terminal show
+// what the editor shows.
 //
 //   node iconv_lite.js version
 //   node iconv_lite.js decode <encoding>   (stdin: one hex byte sequence per line)
@@ -10,11 +11,11 @@
 "use strict";
 
 const fs = require("fs");
-const iconv = require("iconv-lite");
+const iconv = require("@vscode/iconv-lite-umd");
 
 const [command, encoding] = process.argv.slice(2);
 if (command === "version") {
-  process.stdout.write(require("iconv-lite/package.json").version);
+  process.stdout.write(require("@vscode/iconv-lite-umd/package.json").version);
   process.exit(0);
 }
 if (!iconv.encodingExists(encoding)) {
@@ -33,12 +34,14 @@ if (command === "decode") {
 } else if (command === "encode") {
   out = lines.map((hex) => {
     const ch = String.fromCodePoint(parseInt(hex, 16));
-    const bytes = iconv.encode(ch, encoding);
+    const bytes = Buffer.from(iconv.encode(ch, encoding));
     // iconv-lite substitutes "?" for what it can't encode
     return iconv.decode(bytes, encoding) === ch ? bytes.toString("hex") : "-";
   });
 } else {
-  process.stderr.write("usage: iconv_lite.js version | decode <encoding> | encode <encoding>\n");
+  process.stderr.write(
+    "usage: iconv_lite.js version | decode <encoding> | encode <encoding>\n",
+  );
   process.exit(2);
 }
 process.stdout.write(out.join("\n") + "\n");

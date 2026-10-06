@@ -158,7 +158,7 @@ stack_cp932(unsigned c, OtherStatePtr s)
  *
  * stack_gb18030()'s (other.c) own linear-index computation was correct
  * (that part of upstream is fine), so it's reused as-is. Only mapping/
- * reverse are reimplemented, on top of the ICU-derived 2-byte table
+ * reverse are reimplemented, on top of the generated 2-byte table
  * (gb18030-2byte-0), the 4-byte range table (gb18030_ranges.c, the BMP
  * gaps), and a single formula for the supplementary planes.
  */
