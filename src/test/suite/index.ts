@@ -3,7 +3,7 @@ import Mocha from "mocha";
 import { glob } from "glob";
 
 export async function run(): Promise<void> {
-  const mocha = new Mocha({ ui: "tdd", color: false, timeout: 30000 });
+  const mocha = new Mocha({ ui: "tdd", color: false, timeout: 30000, grep: process.env.MOCHA_GREP });
   const testsRoot = path.resolve(__dirname, ".");
 
   const files = await glob("**/*.integration.test.js", { cwd: testsRoot });

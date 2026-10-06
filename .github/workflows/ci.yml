@@ -141,5 +141,11 @@ jobs:
           bash transcoder/scripts/build.sh
           mkdir -p transcoder/bin
           cp transcoder/src/luit transcoder/bin/luit
+      - name: "TEMPORARY: first task in a fresh window, 15 times"
+        run: |
+          npm run compile
+          for i in $(seq 1 15); do
+            MOCHA_GREP=PROBE node out/test/runTest.js --vscode-version stable 2>&1 | grep '^PROBE' || echo "PROBE run $i: no output"
+          done
       - name: Run integration tests
         run: npm run test:integration -- --vscode-version stable
