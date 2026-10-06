@@ -569,6 +569,47 @@ def run_inverted_tree_case() -> tuple[bool, str]:
     return ok, f"started process runs {exe}, its children: {child_exes}"
 
 
+def run_slow_reader_case() -> tuple[bool, str]:
+    """A paste isn't lost when the program reads it later than it arrives.
+    luit's writes to the pty are non-blocking, and whatever didn't fit used
+    to be dropped: with the reader a second late, 20 KB of 200 KB arrived."""
+    import threading
+    data = b"0123456789" * 20_000
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "received.bin")
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execv(str(LUIT), ["luit", "-encoding", "ISO8859-1", "--", "sh", "-c",
+                                 'stty raw -echo; sleep 1; exec cat > "$0"', out])
+        time.sleep(0.5)
+
+        def write_all() -> None:
+            for i in range(0, len(data), 4096):
+                os.write(fd, data[i:i + 4096])
+
+        writer = threading.Thread(target=write_all, daemon=True)
+        writer.start()
+        size, last_change, start = -1, time.time(), time.time()
+        while time.time() - start < 20:
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    os.read(fd, 65536)
+                except OSError:
+                    break
+            now = os.path.getsize(out) if os.path.exists(out) else 0
+            if now != size:
+                size, last_change = now, time.time()
+            if now >= len(data) or (time.time() - start > 3 and time.time() - last_change > 2):
+                break
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        writer.join(1)
+        os.close(fd)
+        got = open(out, "rb").read() if os.path.exists(out) else b""
+    return got == data, f"{len(got)} of {len(data)} bytes arrived intact"
+
+
 def run_layout_case() -> tuple[bool, str]:
     """Started the way a terminal starts a shell, luit inverts the tree where
     a session leader may give up its controlling terminal (Linux) and keeps
@@ -973,6 +1014,7 @@ def main() -> int:
     for name, fn, linux_only in [
             ("inverted (as started by a terminal)", run_inverted_tree_case, True),
             ("inverted on Linux, classic elsewhere, shell runs either way", run_layout_case, False),
+            ("a paste survives a program that reads it late", run_slow_reader_case, False),
             ("resize reaches the shell", run_resize_case, False),
             ("closing the terminal ends shell and converter", run_hangup_case, True),
             ("tab title follows the foreground program", run_title_case, True),

@@ -440,6 +440,61 @@ static const unsigned char PASTE_END[] = "\033[201~";
 #define PASTE_MARKER_LEN 6
 static int paste_open = 0;
 
+/* PATCH(fork, input backpressure): converted input waiting for the pty.
+ * Writes to it are non-blocking, and upstream ignored a short write, so
+ * whatever didn't fit (the program wasn't reading fast enough, or the pty's
+ * buffer is small, as on macOS) was lost. luit now keeps the rest and
+ * doesn't read more input until it's gone (see parent() in luit.c), while
+ * still reading the program's output, so neither side can deadlock. One
+ * chunk's conversion always fits. */
+static unsigned char input_pending[BUFFER_SIZE * 4 + 16 + 6];
+static size_t input_pending_len = 0;
+
+static void
+queueInput(const unsigned char *p, size_t n)
+{
+    memcpy(input_pending + input_pending_len, p, n);
+    input_pending_len += n;
+}
+
+int
+inputPending(void)
+{
+    return input_pending_len > 0;
+}
+
+/* Writes as much held-back input as fd takes now; with block, waits until
+ * all of it is written. Returns -1 if fd can't be written to any more. */
+int
+flushInput(int fd, int block)
+{
+    size_t done = 0;
+    int rc = 0;
+
+    while (done < input_pending_len) {
+	ssize_t n = write(fd, input_pending + done, input_pending_len - done);
+	if (n > 0) {
+	    done += (size_t) n;
+	} else if (n < 0 && errno == EINTR) {
+	    continue;
+	} else if (n < 0 && errno == EAGAIN && block) {
+	    if (waitForOutput(fd) == IO_Closed) {
+		rc = -1;
+		break;
+	    }
+	} else {
+	    if (!(n < 0 && errno == EAGAIN))
+		rc = -1;
+	    break;
+	}
+    }
+    if (rc < 0)
+	done = input_pending_len;	/* nothing will take it */
+    memmove(input_pending, input_pending + done, input_pending_len - done);
+    input_pending_len -= done;
+    return rc;
+}
+
 static const unsigned char *
 findBytes(const unsigned char *hay, size_t n, const unsigned char *needle, size_t m)
 {
@@ -466,7 +521,7 @@ trackPaste(const unsigned char *buf, size_t n)
 
 /*
  * PATCH(fork, input rejection): converts one chunk of keyboard input
- * (UTF-8) and writes it to fd -- or, if any character in it can't be
+ * (UTF-8) and queues it for fd (flushInput()) -- or, if any character in it can't be
  * encoded, writes none of it and returns 1. Substituting or dropping just
  * that character would change what the shell runs (`rm <emoji>*` became
  * `rm ?*` / `rm *`); the caller rings the bell instead. `discard` drops the
@@ -482,7 +537,9 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
     unsigned char out[BUFFER_SIZE * 4 + 16];
     size_t outlen = 0;
 
+    (void) fd;			/* written to by flushInput() */
     assert(count <= BUFFER_SIZE);
+    assert(input_pending_len == 0);
     input_unencodable = 0;
 
     c = buf;
@@ -852,14 +909,14 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 
     if (discard || input_unencodable) {
 	if (paste_open && findBytes(buf, (size_t) count, PASTE_END, PASTE_MARKER_LEN)) {
-	    IGNORE_RC(write(fd, PASTE_END, (size_t) PASTE_MARKER_LEN));
+	    queueInput(PASTE_END, (size_t) PASTE_MARKER_LEN);
 	    paste_open = 0;
 	}
 	return input_unencodable;
     }
     trackPaste(buf, (size_t) count);
     if (outlen > 0)
-	IGNORE_RC(write(fd, out, outlen));
+	queueInput(out, outlen);
     return 0;
 }
 

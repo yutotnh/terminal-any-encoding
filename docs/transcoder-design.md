@@ -294,6 +294,16 @@ macOS.
   katakana next to GR's 2-byte JIS X 0208, so typed half-width katakana
   were never written (and got rejected); G3 only worked because it has
   GR's size.
+- `copyIn()` wrote converted input to the pty with one non-blocking
+  `write()` and ignored a short write, so whatever didn't fit was dropped:
+  pasting 200 KB into a program that started reading a second later
+  delivered 20 KB. Converted input is now held back and written as the pty
+  takes it, and no more input is read until it's gone, while the program's
+  output is still read, so neither side can block the other
+  (`flushInput()`, `IO_PtyWritable`).
+- On macOS, luit waited on its ptys with `poll()`, which doesn't support
+  devices there (BUGS in its man page): input went through at a few KB per
+  second. It uses `select()` on macOS.
 - `fromUtf8()` in `iso2022.c` masked a 4-byte UTF-8 lead with `0x03`
   instead of `0x07`, so U+100000-U+10FFFF (lead `0xF4`) were read as
   U+0000-U+FFFF.

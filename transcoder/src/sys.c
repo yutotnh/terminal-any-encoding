@@ -38,6 +38,13 @@ THE SOFTWARE.
 #include <grp.h>
 #endif
 
+/* PATCH(fork, macOS): macOS's poll() doesn't support devices (BUGS in its
+ * man page), and luit waits on ptys; select() does. With poll(), typed or
+ * pasted input crawled through at a few KB per second there. */
+#ifdef __APPLE__
+#undef HAVE_WORKING_POLL
+#endif
+
 #ifdef HAVE_WORKING_POLL
 #ifdef HAVE_POLL_H
 #include <poll.h>
@@ -145,8 +152,10 @@ waitForOutput(int fd)
 }
 
 int
-waitForInput(int fd1, int fd2, int timeout_ms)
+waitForInput(int fd1, int fd2, int want_write2, int timeout_ms)
 {
+    /* PATCH(fork, input backpressure): with want_write2, also reports
+     * IO_PtyWritable when fd2 can take more of the input luit holds back */
     int ret = 0;
 
 #if defined(HAVE_WORKING_POLL)
@@ -155,7 +164,8 @@ waitForInput(int fd1, int fd2, int timeout_ms)
 
     pfd[0].fd = fd1;
     pfd[1].fd = fd2;
-    pfd[0].events = pfd[1].events = POLLIN;
+    pfd[0].events = POLLIN;
+    pfd[1].events = (short) (POLLIN | (want_write2 ? POLLOUT : 0));
     pfd[0].revents = pfd[1].revents = 0;
 
     rc = poll(pfd, (nfds_t) 2, timeout_ms);
@@ -166,6 +176,8 @@ waitForInput(int fd1, int fd2, int timeout_ms)
 	    ret |= IO_CanRead;
 	if (pfd[1].revents & (POLLIN | POLLERR | POLLHUP))
 	    ret |= IO_CanWrite;
+	if (pfd[1].revents & POLLOUT)
+	    ret |= IO_PtyWritable;
 	if (pfd[0].revents & (POLLNVAL))
 	    ret |= IO_Closed;
 	if (pfd[1].revents & (POLLNVAL))
@@ -174,16 +186,20 @@ waitForInput(int fd1, int fd2, int timeout_ms)
 
 #elif defined(HAVE_WORKING_SELECT)
     fd_set fds;
+    fd_set wfds;
     int rc;
 
     FD_ZERO(&fds);
+    FD_ZERO(&wfds);
     FD_SET(fd1, &fds);
     FD_SET(fd2, &fds);
+    if (want_write2)
+	FD_SET(fd2, &wfds);
     {
 	struct timeval tv;
 	tv.tv_sec = timeout_ms / 1000;
 	tv.tv_usec = (timeout_ms % 1000) * 1000;
-	rc = select(FD_SETSIZE, &fds, NULL, NULL, timeout_ms < 0 ? NULL : &tv);
+	rc = select(FD_SETSIZE, &fds, &wfds, NULL, timeout_ms < 0 ? NULL : &tv);
     }
     if (rc < 0) {
 	ret = -1;
@@ -194,9 +210,12 @@ waitForInput(int fd1, int fd2, int timeout_ms)
 	    ret |= IO_CanRead;
 	if (FD_ISSET(fd2, &fds))
 	    ret |= IO_CanWrite;
+	if (FD_ISSET(fd2, &wfds))
+	    ret |= IO_PtyWritable;
     }
 #else
-    ret = (IO_CanRead | IO_CanWrite);
+    (void) want_write2;
+    ret = (IO_CanRead | IO_CanWrite | IO_PtyWritable);
 #endif
 
     return ret;

@@ -838,6 +838,7 @@ encodeLastArg(int argc, char **argv)
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
 	}
+	IGNORE_RC(flushInput(fd, 1));
 	done += n;
     }
     size = lseek(fd, 0, SEEK_END);
@@ -1218,7 +1219,8 @@ parent(int sfd, int pty)
 	/* PATCH(fork, title): VS Code re-reads the tab title every 200 ms,
 	 * output or not, so keep up with the inner foreground program at
 	 * the same pace (e.g. a silent `sleep`). */
-	rc = waitForInput(sfd, pty, title_suffix != NULL ? 200 : -1);
+	rc = waitForInput(sfd, pty, inputPending(),
+			  title_suffix != NULL ? 200 : -1);
 	updateTitle(pty);
 
 	if (sigwinch_queued) {
@@ -1240,7 +1242,12 @@ parent(int sfd, int pty)
 		if (i > 0)
 		    copyOut(outputState, sfd, buf, (unsigned) i);
 	    }
-	    if (rc & IO_CanRead) {
+	    /* PATCH(fork, input backpressure): input the pty didn't take yet
+	     * goes first, and no more is read until it's gone (see
+	     * flushInput() in iso2022.c). */
+	    if ((rc & IO_PtyWritable) && flushInput(pty, 0) < 0)
+		break;
+	    if ((rc & IO_CanRead) && !inputPending()) {
 		i = (int) read(sfd, buf, (size_t) BUFFER_SIZE);
 		if ((i == 0) || ((i < 0) && (errno != EAGAIN)))
 		    break;
@@ -1259,6 +1266,8 @@ parent(int sfd, int pty)
 		    }
 		    if (discard || input_unencodable)
 			reject_until = now + REJECT_QUIET_MILLIS;
+		    if (flushInput(pty, 0) < 0)
+			break;
 		}
 	    }
 	}

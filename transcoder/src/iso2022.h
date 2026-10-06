@@ -98,6 +98,8 @@ int initIso2022(const char *, const char *, Iso2022Ptr);
 int mergeIso2022(Iso2022Ptr, Iso2022Ptr);
 void reportIso2022(const char *, Iso2022Ptr);
 int copyIn(Iso2022Ptr, int, unsigned char *, int, int);
+int inputPending(void);		/* PATCH(fork, input backpressure) */
+int flushInput(int, int);	/* PATCH(fork, input backpressure) */
 void copyOut(Iso2022Ptr, int, unsigned char *, unsigned);
 
 #ifdef NO_LEAKS
