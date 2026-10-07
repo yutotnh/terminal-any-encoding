@@ -80,7 +80,9 @@ comments, and documentation in English.
 ## Releasing
 
 1. Update `version` in `package.json` and move the `[Unreleased]` notes in
-   `CHANGELOG.md` under that version.
+   `CHANGELOG.md` under a `## [<version>] - <date>` heading. Those notes
+   become the GitHub release's notes, and the release workflow stops before
+   building anything if they're missing.
 2. Push that to `main` and wait for CI to pass. The release workflow
    doesn't run the integration tests (or the spellcheck), so a tag on a
    commit CI hasn't passed can publish a broken build. This
@@ -91,6 +93,12 @@ comments, and documentation in English.
    tag matches `package.json`, runs lint/unit tests and the table check,
    builds the transcoder for every platform (running the tests on the ones a
    runner can execute), packages all 7 VSIXes, and only then publishes them.
+   Once both registries have the version, it creates the GitHub release with
+   the VSIXes attached. Releases are immutable in this repository, so check
+   the notes before tagging. If only that last step fails, don't rerun the
+   job (the registries would reject the same version again); create the
+   release by hand with the same `gh release create` command instead,
+   using the VSIXes from the run's `vsix-*` artifacts.
 
 Publishing needs three secrets in the `release` environment, which only
 accepts `v*` tags:
