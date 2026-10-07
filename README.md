@@ -3,7 +3,8 @@
 [日本語版はこちら / Japanese version](README.ja.md)
 
 Use non-UTF-8 encodings in the VS Code integrated terminal.
-All 45 non-Unicode encodings VS Code supports are available, including EUC-JP, Shift JIS, GBK, Big5-HKSCS and EUC-KR.
+All 45 non-Unicode encodings VS Code supports are available, from Western, Central European, Cyrillic, Greek, Turkish, Arabic, Hebrew, Baltic, Thai and Vietnamese to Chinese, Japanese and Korean.
+They're the non-Unicode encodings in VS Code's "Reopen with Encoding" list (older VS Code versions lack CP 1125 and CP 857, but this extension offers them on any version).
 
 ![A Japanese (EUC-JP) terminal showing EUC-JP file names and contents, with the terminal dropdown listing this extension's 🌐 profiles](images/screenshot.png)
 
@@ -87,7 +88,11 @@ Without it, `$SHELL` is used (as a login shell on macOS).
 ## Locale Detection
 
 Each terminal gets `LANG` set to a locale matching its encoding (e.g. `ja_JP.EUC-JP`).
-If no matching locale is available, a warning tells you what to do.
+If no matching locale is available, a warning tells you what to do ("Don't Show Again" or [`warnAboutLocale`](#settings) turns it off).
+
+On Linux, glibc's standard locales include none for Shift JIS (unless your distribution adds one like `ja_JP.sjis`), Windows 874 or the DOS code pages (CP 437, 850, 852, 857, 865 and 866).
+Without one, `LANG` keeps its inherited value, so programs that handle text by locale, like `date` and `ls`, may display it wrong.
+No warning is shown in this case.
 
 If `~/.bashrc` or similar sets `LANG` or `LC_ALL`, it overrides this.
 Programs that handle text by locale, like `date` and `ls`, then display it wrong without any warning (`ls` shows an EUC-JP file name like `$'\244\242'`).
