@@ -8,12 +8,12 @@ name: Release
 # Nothing is published until every target has been packaged, so a failure in
 # one target can't leave a partial release behind.
 #
-# Required repository settings:
+# Required repository settings (details in CONTRIBUTING.md#releasing):
 #   - Marketplace: no PAT is stored. `vsce publish --azure-credential` signs in
-#     through GitHub OIDC -> Microsoft Entra ID (azure/login). Create an Entra
-#     app registration with a federated credential for this repository's
-#     `release` environment, add it as a member of the Marketplace publisher,
-#     and set its IDs as the AZURE_CLIENT_ID / AZURE_TENANT_ID secrets.
+#     as a user-assigned managed identity through GitHub OIDC (azure/login).
+#     The identity has a federated credential for this repository's `release`
+#     environment and is a member of the Marketplace publisher; its client ID
+#     and tenant ID are the AZURE_CLIENT_ID / AZURE_TENANT_ID secrets.
 #   - Open VSX: OVSX_PAT secret (a token signed under the Eclipse Publisher
 #     Agreement).
 
