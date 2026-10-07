@@ -88,16 +88,32 @@ Without it, `$SHELL` is used (as a login shell on macOS).
 ## Locale Detection
 
 Each terminal gets `LANG` set to a locale matching its encoding (e.g. `ja_JP.EUC-JP`).
-If no matching locale is available, a warning tells you what to do ("Don't Show Again" or [`warnAboutLocale`](#settings) turns it off).
+This makes programs that handle text by locale, like `date` and `ls`, write in that encoding.
 
-On Linux, glibc's standard locales include none for Shift JIS (unless your distribution adds one like `ja_JP.sjis`), Windows 874 or the DOS code pages (CP 437, 850, 852, 857, 865 and 866).
-Without one, `LANG` keeps its inherited value, so programs that handle text by locale, like `date` and `ls`, may display it wrong.
-No warning is shown in this case.
+If the matching locale isn't installed on the host, a warning names the locale to generate.
+"Don't Show Again" or [`warnAboutLocale`](#settings) turns it off.
 
-If `~/.bashrc` or similar sets `LANG` or `LC_ALL`, it overrides this.
-Programs that handle text by locale, like `date` and `ls`, then display it wrong without any warning (`ls` shows an EUC-JP file name like `$'\244\242'`).
+On Linux, though, glibc's standard locales include none at all for the following encodings.
+There's nothing to generate, so no warning is shown for them:
+
+- Shift JIS (unless your distribution adds one like `ja_JP.sjis`)
+- Windows 874
+- the DOS code pages (CP 437, 850, 852, 857, 865 and 866)
+
+With these, `LANG` keeps the value inherited from VS Code, so `date` and `ls` may display text wrong.
+
+### When your shell's startup file sets `LANG`
+
+If `~/.bashrc` or similar sets `LANG` or `LC_ALL`, it overrides the value this extension sets, and `date` and `ls` display text wrong.
+For example, `ls` shows an EUC-JP file name like `$'\244\242'`.
+The override happens after the shell starts, so no warning is shown.
 Programs that print file contents as-is, like `cat`, aren't affected.
-Keep a value that's already set instead: `export LANG="${LANG:-ja_JP.UTF-8}"`.
+
+To avoid this, keep a value that's already set:
+
+```sh
+export LANG="${LANG:-ja_JP.UTF-8}"
+```
 
 ## Tasks
 
@@ -130,18 +146,34 @@ Works for bash, zsh, fish and pwsh, as in VS Code's own terminals.
 
 ## Known Limitations and Troubleshooting
 
-- **Input with a character the encoding can't represent (e.g. an emoji in EUC-JP) isn't sent.**
-  A notification names the character.
-- **Tab names stay fixed on macOS, e.g. `bash (EUC-JP)`.**
-- **Mojibake or `�`.**
-  Check the selected encoding. If it's right, check the locale with `locale charmap`.
-- **Output of other task types and of debug sessions isn't converted.**
-  For a task, use the [`terminalAnyEncoding` type](#tasks).
-  Debugging has no equivalent.
-- **Typed `～` and `№` in EUC-JP become different bytes than when VS Code's editor saves them.**
-  They're sent as `A1 C1` and `AD E2`, the bytes they're shown from, as the wave-dash-unify extension saves them.
-  The editor alone saves `8F A2 B7` and `8F A2 F1`, which other tools can't read.
-  `〜` (U+301C) is sent as the wave dash too, `A1 C1` in EUC-JP and `81 60` in Shift JIS.
+### Typed input isn't sent
+
+Input with a character the encoding can't represent (e.g. an emoji in an EUC-JP terminal) isn't sent to the terminal.
+A notification names the character.
+
+### Mojibake or `�`
+
+First check that the terminal's encoding matches the files or programs you're working with.
+If it does, run `locale charmap` in the terminal to check the locale's encoding (see [Locale Detection](#locale-detection)).
+
+### Tab names don't change on macOS
+
+On macOS, a tab's name stays as it started, e.g. `bash (EUC-JP)`.
+
+### Output of other task types and of debug sessions isn't converted
+
+Only this extension's terminals and tasks of type `terminalAnyEncoding` are converted.
+A task is converted once it uses the [`terminalAnyEncoding` type](#tasks).
+There's no way to convert debug output.
+
+### `～` and `№` typed in EUC-JP become different bytes than the editor saves
+
+`～` and `№` typed in an EUC-JP terminal are sent as `A1 C1` and `AD E2`.
+The terminal shows those bytes as `～` and `№`, so what you type matches what's displayed.
+These are also the bytes the wave-dash-unify extension saves.
+VS Code's editor alone saves `8F A2 B7` and `8F A2 F1` instead, which other tools can't read.
+
+`〜` (U+301C) is sent as the wave dash too: `A1 C1` in EUC-JP and `81 60` in Shift JIS.
 
 ## Contributing
 
