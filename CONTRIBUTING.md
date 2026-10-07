@@ -80,11 +80,7 @@ comments, and documentation in English.
 ## Releasing
 
 1. Update `version` in `package.json` and move the `[Unreleased]` notes in
-   `CHANGELOG.md` under that version. An odd minor version (0.1.x, 0.3.x,
-   ...) is published as a pre-release, an even one as a release: the
-   Marketplace doesn't accept semver suffixes like `-beta`, so this follows
-   [VS Code's recommended scheme](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#prerelease-extensions).
-   A version number can't be reused once published, even if it is removed later.
+   `CHANGELOG.md` under that version.
 2. Push that to `main` and wait for CI to pass. The release workflow
    doesn't run the integration tests (or the spellcheck), so a tag on a
    commit CI hasn't passed can publish a broken build. This
