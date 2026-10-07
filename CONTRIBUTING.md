@@ -80,7 +80,11 @@ comments, and documentation in English.
 ## Releasing
 
 1. Update `version` in `package.json` and move the `[Unreleased]` notes in
-   `CHANGELOG.md` under that version.
+   `CHANGELOG.md` under that version. An odd minor version (0.1.x, 0.3.x,
+   ...) is published as a pre-release, an even one as a release: the
+   Marketplace doesn't accept semver suffixes like `-beta`, so this follows
+   [VS Code's recommended scheme](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#prerelease-extensions).
+   A version number can't be reused once published, even if it is removed later.
 2. Push that to `main` and wait for CI to pass. The release workflow
    doesn't run the integration tests (or the spellcheck), so a tag on a
    commit CI hasn't passed can publish a broken build. This
@@ -92,7 +96,23 @@ comments, and documentation in English.
    builds the transcoder for every platform (running the tests on the ones a
    runner can execute), packages all 7 VSIXes, and only then publishes them.
 
-Publishing needs, in the `release` environment: `AZURE_CLIENT_ID` and
-`AZURE_TENANT_ID` (a Microsoft Entra app with a federated credential for
-this repository, added to the Marketplace publisher; used by
-`vsce publish --azure-credential`), and `OVSX_PAT` for Open VSX.
+Publishing needs three secrets in the `release` environment, which only
+accepts `v*` tags:
+
+- `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`: the client ID of a user-assigned
+  managed identity in Azure and its tenant's ID. No Marketplace PAT is
+  stored: Azure DevOps retires global PATs on 2026-12-01, and
+  `vsce publish --azure-credential` signs in as this identity through
+  GitHub OIDC (`azure/login`). The identity needs:
+  - a federated credential for GitHub Actions with the subject
+    `repo:yutotnh@57719497/terminal-any-encoding@1405905716:environment:release`.
+    The repository uses GitHub's immutable subject format (owner and
+    repository IDs after `@`), so the name-only subject
+    `repo:yutotnh/terminal-any-encoding:...` never matches.
+  - membership (Contributor) in the Marketplace publisher. The ID to add
+    isn't anything the Azure portal shows: it's the `id` that
+    `az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798`
+    returns when signed in as the identity, so get it from a workflow job
+    that runs `azure/login` in the `release` environment.
+- `OVSX_PAT`: an Open VSX token from an account that has signed the Eclipse
+  Publisher Agreement. Open VSX has no OIDC sign-in.
