@@ -3,10 +3,13 @@
 name: Release
 
 # Triggered by a tag (v*): verifies, builds VSIXes for all 7 platform targets,
-# and publishes them to both the Marketplace and Open VSX.
+# publishes them to both the Marketplace and Open VSX, and then creates the
+# GitHub release (notes from CHANGELOG.md, the VSIXes attached).
 #
 # Nothing is published until every target has been packaged, so a failure in
-# one target can't leave a partial release behind.
+# one target can't leave a partial release behind. The GitHub release comes
+# last, so it only exists once both registries have the version; releases are
+# immutable, so it couldn't be fixed up afterwards anyway.
 #
 # Required repository settings (details in CONTRIBUTING.md#releasing):
 #   - Marketplace: no PAT is stored. `vsce publish --azure-credential` signs in
@@ -41,6 +44,8 @@ jobs:
             echo "Tag ${GITHUB_REF_NAME} doesn't match package.json version ${version}" >&2
             exit 1
           fi
+      - name: CHANGELOG.md must have notes for this version
+        run: tools/release/changelog-section.sh "${GITHUB_REF_NAME#v}"
       - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm run test:unit
@@ -111,7 +116,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     permissions:
-      contents: read
+      contents: write # for the GitHub release
       id-token: write # for azure/login (OIDC)
     steps:
       - uses: actions/checkout@v7.0.1
@@ -139,3 +144,16 @@ jobs:
           for vsix in dist/*.vsix; do
             npx ovsx publish "$vsix"
           done
+      # gh uploads the assets to a draft and publishes it only after that, so
+      # this works with immutable releases.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tools/release/changelog-section.sh "$version" > "$RUNNER_TEMP/notes.md"
+          for vsix in dist/*.vsix; do
+            mv "$vsix" "dist/terminal-any-encoding-${version}-$(basename "$vsix")"
+          done
+          gh release create "$GITHUB_REF_NAME" dist/*.vsix --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"

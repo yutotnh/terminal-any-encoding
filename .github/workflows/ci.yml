@@ -51,7 +51,7 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck transcoder/scripts/*.sh .devcontainer/setup.sh
+          shellcheck transcoder/scripts/*.sh tools/release/*.sh .devcontainer/setup.sh
 
   # macOS takes different paths in places (process names fixed at exec, so
   # no tab-title tracking; no /proc), and nothing else exercises it.
