@@ -138,14 +138,17 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
+      # --skip-duplicate skips a target the registry already has, so after a
+      # partial failure (e.g. Open VSX down after the Marketplace succeeded)
+      # rerunning this job finishes the release instead of failing on it.
       - name: Publish to the Marketplace
-        run: npx vsce publish --azure-credential --packagePath dist/*.vsix
+        run: npx vsce publish --azure-credential --skip-duplicate --packagePath dist/*.vsix
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           for vsix in dist/*.vsix; do
-            npx ovsx publish "$vsix"
+            npx ovsx publish "$vsix" --skip-duplicate
           done
       # gh uploads the assets to a draft and publishes it only after that, so
       # this works with immutable releases.

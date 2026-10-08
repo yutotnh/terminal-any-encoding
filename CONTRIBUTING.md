@@ -95,10 +95,8 @@ comments, and documentation in English.
    runner can execute), packages all 7 VSIXes, and only then publishes them.
    Once both registries have the version, it creates the GitHub release with
    the VSIXes attached. Releases are immutable in this repository, so check
-   the notes before tagging. If only that last step fails, don't rerun the
-   job (the registries would reject the same version again); create the
-   release by hand with the same `gh release create` command instead,
-   using the VSIXes from the run's `vsix-*` artifacts.
+   the notes before tagging. If the publish job fails partway, rerun it:
+   both registries skip targets they already have (`--skip-duplicate`).
 
 Publishing needs three secrets in the `release` environment, which only
 accepts `v*` tags:
