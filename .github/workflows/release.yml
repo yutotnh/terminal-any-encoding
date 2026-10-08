@@ -103,8 +103,11 @@ jobs:
       # it, and the Marketplace rejects extensions that declare it.
       - name: Drop the test-only proposed API declaration
         run: npm pkg delete enabledApiProposals
+      # vsce doesn't create the -o file's directory.
       - name: Create VSIX package
-        run: npx vsce package --target ${{ matrix.target }} -o "dist/${{ matrix.target }}.vsix"
+        run: |
+          mkdir -p dist
+          npx vsce package --target ${{ matrix.target }} -o "dist/${{ matrix.target }}.vsix"
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: vsix-${{ matrix.target }}
