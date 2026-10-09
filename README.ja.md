@@ -2,6 +2,8 @@
 
 [English version here](README.md)
 
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=yutotnh.terminal-any-encoding) または [Open VSX](https://open-vsx.org/extension/yutotnh/terminal-any-encoding) からインストールできる。
+
 VS Code の統合ターミナルで、UTF-8 以外の文字エンコーディングを使えるようにする拡張機能である。
 
 対象は、VS Code が扱える Unicode 以外のエンコーディング 45 種類すべてであり、西欧、中欧、キリル文字、ギリシャ語、トルコ語、アラビア語、ヘブライ語、バルト語、タイ語、ベトナム語から、中国語、日本語、韓国語までを含む。この 45 種類は、VS Code の「エンコード付きで再度開く」の一覧のうち、Unicode 以外のものと一致する。古い VS Code の一覧には CP 1125 と CP 857 がないが、この拡張機能では VS Code のバージョンによらずこの 2 つも使える。
@@ -19,6 +21,12 @@ VS Code 1.73.0 以降が必要である。対応 OS は次のとおりで、リ�
 | Windows | 非対応                                            |
 
 ## 使い方
+
+コマンドラインからインストールする場合は、次のコマンドを実行する。
+
+```sh
+code --install-extension yutotnh.terminal-any-encoding
+```
 
 ターミナルパネルの `+` の横にある ▼ から `🌐 Select Encoding...` を選び、続けてエンコーディングを選ぶと、そのエンコーディングで動作するターミナルが開く。
 
