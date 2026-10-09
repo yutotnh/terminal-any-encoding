@@ -2,6 +2,8 @@
 
 [日本語版はこちら / Japanese version](README.ja.md)
 
+Install from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=yutotnh.terminal-any-encoding) or [Open VSX](https://open-vsx.org/extension/yutotnh/terminal-any-encoding).
+
 Use non-UTF-8 encodings in the VS Code integrated terminal.
 All 45 non-Unicode encodings VS Code supports are available, from Western, Central European, Cyrillic, Greek, Turkish, Arabic, Hebrew, Baltic, Thai and Vietnamese to Chinese, Japanese and Korean.
 They're the non-Unicode encodings in VS Code's "Reopen with Encoding" list (older VS Code versions lack CP 1125 and CP 857, but this extension offers them on any version).
@@ -20,6 +22,12 @@ Supported operating systems (for a remote connection, the remote host's):
 | Windows | Not supported                             |
 
 ## Getting Started
+
+To install from the command line:
+
+```sh
+code --install-extension yutotnh.terminal-any-encoding
+```
 
 Pick an encoding from `🌐 Select Encoding...` in the ▼ next to the `+` button in the terminal panel.
 
