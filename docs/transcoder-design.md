@@ -328,6 +328,15 @@ macOS.
   takes it, and no more input is read until it's gone, while the program's
   output is still read, so neither side can block the other
   (`flushInput()`, `IO_PtyWritable`).
+- `parent()` in `luit.c` relied on `restoreTermios()` (`TCSAFLUSH`) to wait
+  until the outer terminal had read the last output before luit exited. On
+  macOS (the classic layout), the shell's `SIGCHLD` could interrupt that
+  wait (`EINTR`); luit then exited and the unread output was discarded, so a
+  command that printed and exited at once showed nothing if VS Code read it
+  late, e.g. while still starting up (a task's output was intermittently
+  missing on macOS CI). With the reader a second late, most runs lost it.
+  luit now waits with `tcdrain()`, retried on `EINTR`, before restoring the
+  terminal.
 - On macOS, luit waited on its ptys with `poll()`, which doesn't support
   devices there (BUGS in its man page): input went through at a few KB per
   second. It uses `select()` on macOS.

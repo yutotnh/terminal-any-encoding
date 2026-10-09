@@ -546,6 +546,38 @@ def run_quick_exit_case(runs: int = 2000) -> tuple[bool, str]:
     return lost == 0, f"output lost in {lost} of {runs} runs"
 
 
+def run_late_reader_quick_exit_case(runs: int = 15) -> tuple[bool, str]:
+    """A command that prints and exits at once still shows its output when
+    the terminal reads it late (VS Code busy starting up). On macOS, luit's
+    wait for the output to be read was cut short by the shell's SIGCHLD, it
+    exited, and the unread output was discarded: lost in most runs with the
+    reader a second late."""
+    lost = 0
+    for _ in range(runs):
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execv(str(LUIT), ["luit", "-encoding", "euc-jp-2007", "--",
+                                 "sh", "-c", "printf 'out:\\306\\374\\n'; exit 3"])
+        time.sleep(1)
+        out = b""
+        while True:
+            r, _, _ = select.select([fd], [], [], 5)
+            if not r:
+                break
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            out += data
+        os.waitpid(pid, 0)
+        os.close(fd)
+        if "out:日".encode() not in out:
+            lost += 1
+    return lost == 0, f"output lost in {lost} of {runs} runs"
+
+
 def run_slow_reader_case() -> tuple[bool, str]:
     """A paste isn't lost when the program reads it later than it arrives.
     luit's writes to the pty are non-blocking, and whatever didn't fit used
@@ -982,6 +1014,7 @@ def main() -> int:
     for name, fn, linux_only in [
             ("inverted (as started by a terminal)", run_inverted_tree_case, True),
             ("a command that prints and exits at once shows its output", run_quick_exit_case, False),
+            ("...even when the terminal reads it late", run_late_reader_quick_exit_case, False),
             ("inverted on Linux, classic elsewhere, shell runs either way", run_layout_case, False),
             ("a paste survives a program that reads it late", run_slow_reader_case, False),
             ("resize reaches the shell", run_resize_case, False),
