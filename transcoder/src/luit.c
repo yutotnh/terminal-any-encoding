@@ -1273,6 +1273,15 @@ parent(int sfd, int pty)
 	}
     }
 
+    /* PATCH(fork, drain on exit): waits until whatever reads the outer
+     * terminal (VS Code) has taken the last output before exiting. On
+     * macOS, the restoreTermios() below used to do that wait, but the
+     * shell's SIGCHLD interrupted it (EINTR), luit exited, and output
+     * still unread was discarded: a command that printed and exited at
+     * once showed nothing when VS Code read late. */
+    while (tcdrain(sfd) < 0 && errno == EINTR) {
+	continue;
+    }
     restoreTermios(sfd);
     cleanup_io(sfd, pty);
 }

@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: the output of a command that printed and exited at once (a task,
+  for example) could be lost when VS Code read it late.
+
 ## [0.1.0] - 2026-10-08
 
 - Initial release.
