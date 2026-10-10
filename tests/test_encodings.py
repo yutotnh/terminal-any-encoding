@@ -158,6 +158,22 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.3, " y\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\a y^[[201~ok", "after the bound, an end marker that partly went through is completed"),
 ]
 
+# The paste rules don't depend on the encoding, but rejecting does (OTHER
+# charsets, single-byte tables), and a read is converted in parts: the main
+# cases again in other encodings, with a character of each after the
+# paste's end. (GB18030 can encode every character, so it rejects nothing.)
+for _enc, _ch in (("CP932", "あ"), ("GBK", "中"), ("CP1252", "é"), ("eucKR", "한")):
+    INPUT_REJECTION_SEQUENCE_CASES += [
+        (_enc, [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, _ch + "ok")], BP_ON, "\a" + _ch + "ok",
+         "the rest of a bracketed paste is dropped up to its end marker"),
+        (_enc, [(0.0, "\x1b[200~rm ☃\x1b[201~" + _ch + "ok")], BP_ON, "\a" + _ch + "ok",
+         "input after the end marker in the rejected read itself goes through"),
+        (_enc, [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (0.3, "1~"), (0.3, "ok")], None, "^[[200~X\a^[[201~ok",
+         "an end marker cut by the pause still closes the paste"),
+        (_enc, [(0.0, "\x1b[200~" + _ch + " ☃"), (0.3, " x\x1b[201~☃")], BP_ON, "\a\a",
+         "a character after the end marker that can't be encoded is rejected on its own"),
+    ]
+
 # Cases that need input to keep coming under 50 ms apart, the drop's pause.
 # macOS runners delay a write by up to 49 ms (measured), so these can't
 # set up there what they test, and run on Linux only.
