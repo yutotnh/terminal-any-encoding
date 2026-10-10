@@ -100,9 +100,20 @@ Iso2022Ptr allocIso2022(void);
 int initIso2022(const char *, const char *, Iso2022Ptr);
 int mergeIso2022(Iso2022Ptr, Iso2022Ptr);
 void reportIso2022(const char *, Iso2022Ptr);
-int copyIn(Iso2022Ptr, int, unsigned char *, int, int);
-int inputPending(void);		/* PATCH(fork, input backpressure) */
-int flushInput(int, int);	/* PATCH(fork, input backpressure) */
+/* PATCH(fork, input backpressure): the most copyIn() makes of one chunk.
+ * Each character takes at least one byte of the chunk and is written as at
+ * most MAX_ENCODED_CHAR bytes (a 4-byte GB18030 code, or a 2-byte code
+ * with a shift before and after it). */
+#define MAX_ENCODED_CHAR 4
+#define CONVERTED_CHUNK_MAX (BUFFER_SIZE * MAX_ENCODED_CHAR)
+
+int copyIn(Iso2022Ptr, unsigned char *, int, int);
+/* PATCH(fork, input rejection): see copyIn() */
+extern unsigned input_unencodable_char;
+/* PATCH(fork, input backpressure): see input_pending in iso2022.c */
+int inputPending(void);
+int flushInput(int, int);
+size_t takeInput(unsigned char *);
 void copyOut(Iso2022Ptr, int, unsigned char *, unsigned);
 
 #ifdef NO_LEAKS

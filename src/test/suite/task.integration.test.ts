@@ -9,9 +9,10 @@ const EXTENSION_ID = "yutotnh.terminal-any-encoding";
 
 /**
  * What terminals print while a test runs, and when terminals open, print
- * and tasks end, for the failure message: a task's output used to go
- * missing on macOS CI now and then (luit exited before VS Code had read
- * it; see docs/transcoder-design.md).
+ * and tasks end, for the failure message, so a task whose output went
+ * missing (as when luit exits before VS Code has read it; see
+ * docs/transcoder-design.md) can be told from one that printed the wrong
+ * thing.
  */
 function recordOutput(): {
   readonly text: string;

@@ -11,7 +11,7 @@ Implementation change history and verification logs aren't kept here.
 `transcoder/vendor/luit-upstream/` is an unmodified copy of Thomas E.
 Dickey's official distribution (tarball `luit.tar.gz`, version
 `2.0-20250912`). `transcoder/src/` is the working copy, carrying the fork's
-own patches and additional files (`builtin_ja.c`/`other_ja.c`, etc.).
+own patches and additional files (`builtin_fork.c`/`other_fork.c`, etc.).
 
 How a table's `source` values are represented depends on luit's internal
 charset type (`plane` in `converters.json`):
@@ -36,7 +36,7 @@ table), and feeding it the IBM-extension lead bytes (`0xFA`-`0xFC`) produces
 an invalid row number and mis-converts (stock luit's `SJIS` still does). So a
 dedicated lookup table keyed directly on the raw SJIS 2-byte value
 (`cp932-direct-0`) was added instead. GBK, GB 2312, CP949 and Big5-HKSCS
-work the same way, through shared helpers in `other_ja.c`.
+work the same way, through shared helpers in `other_fork.c`.
 
 A table "finds" a code only if it has a row for it
 (`luitMapCodeValueFound()` checks the row's text): upstream presets the
@@ -52,7 +52,7 @@ reads and saves files with, in the package and version VS Code ships
 (`@vscode/iconv-lite-umd`, pinned in `package-lock.json`).
 `tools/gen-tables/gen_tables.py` decodes every byte sequence of each table's
 shape on its own (`tools/gen-tables/iconv_lite.js`) and writes
-`transcoder/src/builtin_ja.c` and `gb18030_ranges.c` from the declarations
+`transcoder/src/builtin_fork.c` and `gb18030_ranges.c` from the declarations
 in `converters.json`; `--check` verifies that regenerating matches
 `tools/gen-tables/golden/tables.sha256`. The generated files are not
 hand-edited. iconv-lite is MIT-licensed; THIRD-PARTY-NOTICES.md says where
@@ -95,7 +95,7 @@ data instead of ours, and musl's iconv, which the distributed binaries have,
 has no CP1253/1254/1256/1257/1258/874 at all (luit fell back to ISO 8859-1
 for them). Every charset a supported encoding uses has a generated table;
 the ones named like upstream's (`iso8859-*`, `koi8-*`) replace them, since
-`findBuiltinEncoding()` looks in `builtin_ja.c` first. CI's native test job
+`findBuiltinEncoding()` looks in `builtin_fork.c` first. CI's native test job
 installs `xfonts-encodings`.
 
 GB18030's supplementary planes (U+10000 and above) are a single formula
@@ -132,8 +132,13 @@ converted. A paste can arrive in several reads, so input is also dropped until
 it pauses for 50 ms after a rejection (forwarding only the tail of a paste
 could run a different command), and if a bracketed paste (`ESC [200~`) was
 already forwarded, its end marker is still passed through so the shell doesn't
-stay in paste mode. Warning on stderr instead isn't an option either: the
-messages would be mixed into the terminal output.
+stay in paste mode. Both have gaps: the rest of a paste arriving after the
+pause gets through, and markers are only recognized whole within one read.
+Dropping up to the end marker instead would have to be bounded, as luit
+can't know that one will come (the terminal may not send markers at all,
+e.g. with `terminal.integrated.ignoreBracketedPasteMode`). Warning on stderr
+instead isn't an option either: the messages would be mixed into the
+terminal output.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a
@@ -171,7 +176,10 @@ happened once and had to be reverted). Instead, the design is:
    without any fallback.
 3. Use these new functions only from the call sites of charsets added by the
    fork (`FontencCharsetRecode`/`FontencCharsetReverse` in `charset.c`,
-   `mapping_cp932`/`reverse_cp932` in `other_ja.c`, etc.).
+   and every `mapping_*`/`reverse_*` in `other_fork.c`). The `other_fork.c`
+   ones return `U+FFFD` for a code without a character, and 0 for a
+   character without a code, which `copyIn()` rejects (0 is also what
+   upstream's `reverse_gb18030()` returns when it finds nothing).
 
 Stock upstream charsets (ones the fork hasn't replaced the tables for) are
 out of scope for this policy and keep their old identity-fallback behavior.
@@ -280,8 +288,10 @@ macOS.
   even when the reverse lookup failed (asymmetric with the matching G2
   block). With encodings where `IF_SS` is active (EUC-family encodings in
   general), characters absent from G1/G2/G3 couldn't reach the fallback
-  path. Fixed it to match G2's symmetric behavior. The same kind of bug
-  existed on the CP932 side too (via `OTHER`).
+  path. Fixed it to match G2's symmetric behavior. Its `OTHER` block had
+  the same kind of bug: it moved on when the charset's reverse function
+  found no code (0) and wrote nothing, so the character vanished. It now
+  rejects the input.
 - Even after that fix, the T_128 charset (CP852 etc., `shift`=0x80) still had
   the same symptom (silent disappearance) via a different code path: because
   some source bytes map, after applying shift, into the control range
@@ -311,7 +321,7 @@ macOS.
   Latin-1, and the C1 bytes `0x8E`/`0x8F`/`0x9B` were taken for SS2/SS3/CSI,
   though in Big5 they're lead bytes (`0x8E 0x40` showed `@`, and `0x9B`
   could swallow what followed as a control sequence). They're OTHER charsets
-  now (`EUC-JP-2007`, `BIG5X` in `other_ja.c`), with the rule above.
+  now (`EUC-JP-2007`, `BIG5X` in `other_fork.c`), with the rule above.
 - `gb18030_linear_to_codepoint()`: the supplementary-plane check
   (`linear >= 189000`) had no upper bound, so an invalid 4-byte sequence that
   was byte-range-valid but had a linear index past the maximum could produce

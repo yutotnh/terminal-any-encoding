@@ -502,11 +502,11 @@ allocatePty(int *pty_return, char **line_return)
 }
 
 /*
- * PATCH(fork, openpty): openpty() also opens the slave side, and only the
- * child closed it (in openTty). The parent kept it open for good, so the
- * master never saw EOF/EIO when the shell exited and luit kept running
- * (the terminal never closed). Hit on the musl static build, which takes
- * this path. The parent calls this right after forking.
+ * PATCH(fork, openpty): openpty() also opens the slave side, and upstream
+ * closes it only in the child (openTty()). Left open in the parent, the
+ * master never sees EOF/EIO when the shell exits, so luit keeps running
+ * and the terminal never closes. Builds with openpty() take this path, the
+ * musl static build among them. The parent calls this right after forking.
  */
 void
 closeParentTty(void)

@@ -418,11 +418,8 @@ stack_gb18030(unsigned c, OtherStatePtr s)
     /* if set gb18030.linear => True. the return value is "linear'd" */
     if (s->gb18030.buf_ptr == 0) {
 	if (c <= 0x80) {
-	    /* PATCH(fork): if the linear flag is left set right after
-	     * completing a 4-byte sequence, the next ASCII byte gets
-	     * misinterpreted as a linear index by mapping_gb18030x(),
-	     * corrupting it into an unrelated character from the BMP gap
-	     * range. Reset it explicitly here. */
+	    /* PATCH(fork, gb18030): clear the flag a 4-byte code left set,
+	     * or mapping_gb18030x() takes this byte for a linear index. */
 	    s->gb18030.linear = 0;
 	    return (int) c;
 	}

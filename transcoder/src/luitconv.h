@@ -101,7 +101,7 @@ typedef struct {
     unsigned target;
 } BuiltInMapping;
 
-/* PATCH(fork): flag in BuiltInMapping.target for a decode-only row (see
+/* PATCH(fork, builtin tables): flag in BuiltInMapping.target for a decode-only row (see
  * initializeBuiltInTable() in luitconv.c and tools/gen-tables/gen_tables.py). */
 #define BUILTIN_DECODE_ONLY 0x80000000u
 
@@ -118,7 +118,7 @@ extern FontMapPtr luitLookupMapping(const char *, UM_MODE, US_SIZE);
 extern FontMapReversePtr luitLookupReverse(FontMapPtr);
 extern LuitConv *luitLookupEncoding(FontMapPtr);
 extern const BuiltInCharsetRec builtin_encodings[];
-extern const BuiltInCharsetRec builtin_encodings_ja[];  /* PATCH(fork, builtin tables) */
+extern const BuiltInCharsetRec builtin_encodings_fork[];  /* PATCH(fork, builtin tables) */
 extern unsigned luitMapCodeValue(unsigned, FontMapPtr);
 extern int luitMapCodeValueFound(unsigned, FontMapPtr, unsigned *);  /* PATCH(fork, fallback) */
 extern int luitReverseFound(unsigned, FontMapReversePtr, unsigned *);  /* PATCH(fork, fallback) */

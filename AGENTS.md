@@ -17,7 +17,7 @@ top of that:
   Code decodes and encodes files with, pinned to an exact version. Keep it
   at the version VS Code ships: a different one can make the terminal and
   the editor disagree. Its version is part of the generated
-  `builtin_ja.c`, so a Dependabot bump fails `gen-tables-check` until you
+  `builtin_fork.c`, so a Dependabot bump fails `gen-tables-check` until you
   regenerate the tables and update the version in `THIRD-PARTY-NOTICES.md`.
 - CI's `gen-tables-check` job runs `gen_tables.py --check` against
   `tools/gen-tables/golden/tables.sha256`, so a regenerated table without an

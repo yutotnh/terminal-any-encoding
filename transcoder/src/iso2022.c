@@ -446,14 +446,21 @@ static int paste_open = 0;
  * whatever didn't fit (the program wasn't reading fast enough, or the pty's
  * buffer is small, as on macOS) was lost. luit now keeps the rest and
  * doesn't read more input until it's gone (see parent() in luit.c), while
- * still reading the program's output, so neither side can deadlock. One
- * chunk's conversion always fits. */
-static unsigned char input_pending[BUFFER_SIZE * 4 + 16 + 6];
+ * still reading the program's output, so neither side can deadlock.
+ * copyIn() only runs once this is empty, and queues either one chunk's
+ * conversion or PASTE_END, so it never holds more than CONVERTED_CHUNK_MAX
+ * bytes. */
+static unsigned char input_pending[CONVERTED_CHUNK_MAX];
 static size_t input_pending_len = 0;
+
+/* PATCH(fork, input rejection): the first character copyIn() couldn't
+ * encode in the chunk it last rejected (Unicode) */
+unsigned input_unencodable_char = 0;
 
 static void
 queueInput(const unsigned char *p, size_t n)
 {
+    assert(input_pending_len + n <= sizeof(input_pending));
     memcpy(input_pending + input_pending_len, p, n);
     input_pending_len += n;
 }
@@ -462,6 +469,18 @@ int
 inputPending(void)
 {
     return input_pending_len > 0;
+}
+
+/* Moves all held-back input into dst, which has room for
+ * CONVERTED_CHUNK_MAX bytes, and returns its length */
+size_t
+takeInput(unsigned char *dst)
+{
+    size_t n = input_pending_len;
+
+    memcpy(dst, input_pending, n);
+    input_pending_len = 0;
+    return n;
 }
 
 /* Writes as much held-back input as fd takes now; with block, waits until
@@ -522,26 +541,27 @@ trackPaste(const unsigned char *buf, size_t n)
 
 /*
  * PATCH(fork, input rejection): converts one chunk of keyboard input
- * (UTF-8) and queues it for fd (flushInput()) -- or, if any character in it can't be
- * encoded, writes none of it and returns 1. Substituting or dropping just
- * that character would change what the shell runs (`rm <emoji>*` became
- * `rm ?*` / `rm *`); the caller rings the bell instead. `discard` drops the
- * chunk without converting output (the caller uses it for input that
- * follows a rejection, i.e. the rest of a paste). Either way the parser
- * state is still advanced, and an open bracketed paste is closed.
+ * (UTF-8) and queues it (flushInput() writes it, takeInput() hands it
+ * over) -- or, if any character in it can't be encoded, queues none of it
+ * and returns 1, with the character in input_unencodable_char.
+ * Substituting or dropping just that character would change what the
+ * shell runs (`rm <emoji>*` would become `rm ?*` or `rm *`); the caller
+ * rings the bell instead. `discard` drops the chunk without queueing it
+ * (the caller uses it for input that follows a rejection, i.e. the rest of
+ * a paste). Either way the parser state is still advanced, and an open
+ * bracketed paste is closed.
  */
 int
-copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
+copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
 {
     unsigned char *c;
     int codepoint, rem;
-    unsigned char out[BUFFER_SIZE * 4 + 16];
+    unsigned char out[CONVERTED_CHUNK_MAX];
     size_t outlen = 0;
+    int rejected = 0;
 
-    (void) fd;			/* written to by flushInput() */
     assert(count <= BUFFER_SIZE);
     assert(input_pending_len == 0);
-    input_unencodable = 0;
 
     c = buf;
     rem = count;
@@ -608,6 +628,7 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 	    unsigned char obuf[4];
 
 #define EMIT(n) do { \
+	    assert(outlen + (size_t) (n) <= sizeof(out)); \
 	    memcpy(out + outlen, obuf, (size_t) (n)); \
 	    outlen += (size_t) (n); \
 	} while(0)
@@ -685,6 +706,12 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 	    EMIT(3); \
 	} while(0)
 
+#define REJECT() do { \
+	    if (!rejected) \
+		input_unencodable_char = ucode; \
+	    rejected = 1; \
+	} while(0)
+
 #define WRITE_2_P_S(p,i,s) do { \
 	    obuf[0] = UChar(p); \
 	    obuf[1] = UChar(((i) >> 8) & 0xFF); \
@@ -711,6 +738,8 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		    WRITE_2(c2);
 		else if (c2)
 		    WRITE_1(c2);
+		else		/* PATCH(fork, input rejection) */
+		    REJECT();
 		continue;
 	    }
 	    i = (GL(is)->reverse) (ucode, GL(is));
@@ -758,23 +787,15 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		    continue;
 		}
 	    }
-	    /* PATCH(fork, fallback) + PATCH(fork, T_128 control range): upstream bug fix.
-	     * This block originally unconditionally continue'd right after
-	     * the switch even when G2/G3(is)->reverse() failed (i<0), so it
-	     * could never reach the LS block or the unencodable-character handling
-	     * (at the end of this file) that follows. With encodings where
-	     * IF_SS is active (e.g. euc-jp-2007), a character absent from
-	     * G1/G2/G3 was always silently swallowed right here. See
-	     * "Known upstream bugs and fixes" in docs/transcoder-design.md.
-	     *
-	     * Additionally, even when reverse() itself succeeds (i>=0),
-	     * there are cases where it falls through the GL range check
-	     * (i>=0x20 / i>=0x2020) and nothing gets written (when, for a
-	     * T_128 charset, the value after applying shift lands in the
-	     * control range 0x00-0x1F; e.g. CP852's bytes 0x80-0x9F).
-	     * continue'ing here too would cause the same silent
-	     * disappearance, so only continue when a write actually
-	     * happened. */
+	    /* PATCH(fork, fallback) + PATCH(fork, T_128 control range): the
+	     * G2/G3 lookups go on to the next character only when they wrote
+	     * one. Upstream continued after them unconditionally, so with
+	     * single shifts on (IF_SS), a character neither G2 nor G3 has never
+	     * reached the LS lookup or the rejection after it, and vanished.
+	     * The same happened when reverse() found a code but it was too low
+	     * to write (a T_128 code that lands in 0x00-0x1F after the shift,
+	     * e.g. CP852's 0x80-0x9F). See "Known upstream bugs and fixes" in
+	     * docs/transcoder-design.md. */
 	    if (is->inputFlags & IF_SS) {
 		i = G2(is)->reverse(ucode, G2(is));
 		if (i >= 0) {
@@ -888,14 +909,11 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 		    continue;
 		}
 	    }
-	    /* PATCH(fork, fallback) + PATCH(fork, input rejection): reaching here
-	     * means every reverse lookup -- GL/GR/G2/G3/LS -- failed (an
-	     * unencodable Unicode character). Stock wrote nothing and moved
-	     * on, so keystrokes silently vanished; this chunk is rejected as
-	     * a whole instead (see the comment above copyIn). */
-	    if (!input_unencodable)
-		input_unencodable_char = ucode;
-	    input_unencodable = 1;
+	    /* PATCH(fork, fallback) + PATCH(fork, input rejection): every
+	     * reverse lookup -- GL/GR/G2/G3/LS -- failed. Upstream wrote
+	     * nothing and moved on, so the keystroke vanished; the chunk is
+	     * rejected as a whole instead (see the comment above copyIn). */
+	    REJECT();
 	}
 #undef WRITE_1
 #undef WRITE_2
@@ -905,15 +923,16 @@ copyIn(Iso2022Ptr is, int fd, unsigned char *buf, int count, int discard)
 #undef WRITE_2_P
 #undef WRITE_2_P_7bit
 #undef WRITE_2_P_8bit
+#undef REJECT
 #undef EMIT
     }
 
-    if (discard || input_unencodable) {
+    if (discard || rejected) {
 	if (paste_open && findBytes(buf, (size_t) count, PASTE_END, PASTE_MARKER_LEN)) {
 	    queueInput(PASTE_END, (size_t) PASTE_MARKER_LEN);
 	    paste_open = 0;
 	}
-	return input_unencodable;
+	return rejected;
     }
     trackPaste(buf, (size_t) count);
     if (outlen > 0)
@@ -948,13 +967,13 @@ otherByte(Iso2022Ptr is, int fd, unsigned char b)
 	unsigned ucode = other->other_recode((unsigned) c, other->other_aux);
 	/* An unmapped 4-byte GB18030 sequence stays one U+FFFD, as in the
 	 * WHATWG Encoding Standard: every one of them is well-formed. */
-	if (ucode != 0xFFFD || count == 1 || count == 4) {
+	if (ucode != UNICODE_REPLACEMENT_CHAR || count == 1 || count == 4) {
 	    outbufUTF8(is, fd, ucode);
 	    is->other_pending_count = 0;
 	    return 1;
 	}
     }
-    outbufUTF8(is, fd, 0xFFFD);
+    outbufUTF8(is, fd, UNICODE_REPLACEMENT_CHAR);
     if (count == 1)
 	return 1;
     count -= 2;

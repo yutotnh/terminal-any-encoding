@@ -107,8 +107,8 @@ static FontencCharsetRec fontencCharsets[] =
     {"CP 1251",        T_128,   0,   "microsoft-cp1251", 0x80,   NULL, NULL},
     {"CP 1252",        T_128,   0,   "microsoft-cp1252", 0x80,   NULL, NULL},
     {"CP 1255",        T_128,   0,   "microsoft-cp1255", 0x80,   NULL, NULL},
-    /* PATCH(fork, encodings): Windows code pages stock luit had no charset
-     * for (it fell back to ISO 8859-1). Tables in builtin_ja.c. */
+    /* PATCH(fork, encodings): Windows code pages upstream has no charset
+     * for (it falls back to ISO 8859-1). Tables in builtin_fork.c. */
     {"CP 1253",        T_128,   0,   "microsoft-cp1253", 0x80,   NULL, NULL},
     {"CP 1254",        T_128,   0,   "microsoft-cp1254", 0x80,   NULL, NULL},
     {"CP 1256",        T_128,   0,   "microsoft-cp1256", 0x80,   NULL, NULL},
@@ -118,15 +118,13 @@ static FontencCharsetRec fontencCharsets[] =
 
     {"CP 437",         T_128,   0,   "ibm-cp437",        0x80,   NULL, NULL},
     {"CP 850",         T_128,   0,   "ibm-cp850",        0x80,   NULL, NULL},
-    /* PATCH(fork, encodings): stock's xlfd "ibm-cp852" had no data and was
-     * unmapped (confirmed by measurement). Replaced with our own generated table. */
+    /* PATCH(fork, encodings): nothing provides data for upstream's xlfd
+     * "ibm-cp852", so it was left unmapped; the fork's table instead. */
     {"CP 852",         T_128,   0,   "cp852-direct-0",   0x80,   NULL, NULL},
-    /* PATCH(fork, encodings): the following 3 entries are new additions, since
-     * stock luit had no corresponding Encoding/charset entry at all. */
+    /* PATCH(fork, encodings): encodings upstream doesn't have at all */
     {"CP 857",         T_128,   0,   "cp857-direct-0",   0x80,   NULL, NULL},
     {"CP 1125",         T_128,   0,   "cp1125-direct-0",  0x80,   NULL, NULL},
     {"MAC ROMAN",       T_128,   0,   "macroman-direct-0", 0x80,   NULL, NULL},
-    /* PATCH(fork, encodings): KOI8-T, see docs/transcoder-design.md. */
     {"KOI8-T",          T_128,   0,   "koi8t-direct-0",   0x80,   NULL, NULL},
     {"CP 865",         T_128,   0,   "ibm-cp865",        0x80,   NULL, NULL},
     {"CP 866",         T_128,   0,   "ibm-cp866",        0x80,   NULL, NULL},
@@ -156,22 +154,22 @@ typedef struct _OtherCharset {
 
 static const OtherCharsetRec otherCharsets[] =
 {
-    /* PATCH(fork, fallback): replaced with the version that replaces unmapped codes with U+FFFD
-     * (other_ja.c). stack reuses upstream's stack_gbk as-is. */
+    /* PATCH(fork, fallback): the fork's tables, without upstream's identity
+     * fallback (other_fork.c); bytes are still assembled by upstream's stack
+     * functions. */
     {"GBK",        init_gbkx,    mapping_gbkx,    reverse_gbkx,    stack_gbk},
-    /* PATCH(fork, encodings): see other_ja.c */
+    /* PATCH(fork, encodings): see other_fork.c */
     {"GB2312",     init_gb2312x, mapping_gb2312x, reverse_gb2312x, stack_gbk},
     {"CP949",      init_cp949,   mapping_cp949,   reverse_cp949,   stack_gbk},
     {"UTF-8",      init_utf8,    mapping_utf8,    reverse_utf8,    stack_utf8},
     {"SJIS",       init_sjis,    mapping_sjis,    reverse_sjis,    stack_sjis},
-    /* PATCH(fork, fallback): same as above. stack reuses upstream's stack_hkscs. */
+    /* PATCH(fork, fallback): as GBK */
     {"BIG5-HKSCS", init_hkscsx,  mapping_hkscsx,  reverse_hkscsx,  stack_hkscs},
-    /* PATCH(fork, gb18030): replaced with the 4-byte-capable version
-     * (other_ja.c). stack reuses upstream's stack_gb18030 (other.c) as-is. */
+    /* PATCH(fork, gb18030): with its 4-byte codes (other_fork.c) */
     {"GB18030",    init_gb18030x, mapping_gb18030x, reverse_gb18030x, stack_gb18030},
-    /* PATCH(fork, cp932): see other_ja.c */
+    /* PATCH(fork, cp932): see other_fork.c */
     {"CP932",      init_cp932,   mapping_cp932,   reverse_cp932,   stack_cp932},
-    /* PATCH(fork, big5) and PATCH(fork, eucjp): see other_ja.c */
+    /* PATCH(fork, big5) and PATCH(fork, eucjp): see other_fork.c */
     {"BIG5X",      init_big5x,   mapping_big5x,   reverse_big5x,   stack_hkscs},
     {"EUC-JP-2007", init_eucjpx, mapping_eucjpx,  reverse_eucjpx,  stack_eucjp},
     {NULL,         NULL,         NULL,            NULL,            NULL}
@@ -224,61 +222,13 @@ compare1(const char *s, const char *t, size_t n)
     return result;
 }
 
-#define UNICODE_REPLACEMENT_CHAR 0xFFFD
-
-/* PATCH(fork, fallback): applies the fallback policy to the charsets whose
- * table the fork generates (builtin_ja.c), and only those. Other upstream
- * charsets keep stock's behavior (luitMapCodeValue's identity fallback) --
- * directly changing luitMapCodeValue itself was confirmed by measurement to
- * break unrelated processing ("Fallback design for conversion failures" in
- * docs/transcoder-design.md). Going by the generated list rather than a
- * list of names here means a new table can't be left out (CP865's once
- * was).
- */
-#ifdef USE_ICONV
-static int
-isFallbackManagedXlfd(const char *xlfd)
-{
-    int n;
-
-    if (xlfd == NULL)
-	return 0;
-    for (n = 0; builtin_encodings_ja[n].name != NULL; ++n) {
-	if (!strcmp(xlfd, builtin_encodings_ja[n].name))
-	    return 1;
-    }
-    return 0;
-}
-#endif /* USE_ICONV */
-
 static unsigned int
 FontencCharsetRecode(unsigned int n, const CharsetRec * self)
 {
     const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
     unsigned result;
 
-    /* PATCH(fork): luitMapCodeValueFound()/luitReverseFound() (luitconv.c)
-     * are USE_ICONV-backend-only; under !USE_ICONV (--enable-fontenc)
-     * they're not even declared in luitconv.h. The fork-local charsets
-     * (isFallbackManagedXlfd) assume the generated tables, and the fontenc
-     * (.enc file) side has no corresponding data, so this branch can't
-     * return a meaningful result under the fontenc backend anyway. To
-     * avoid breaking the build, fall back to the upstream-equivalent
-     * MapCodeValue() under !USE_ICONV. */
-#ifdef USE_ICONV
-    if (isFallbackManagedXlfd(fc->xlfd)) {
-	unsigned code = n + fc->shift;
-	unsigned found_value;
-	if (luitMapCodeValueFound(code, fc->mapping, &found_value)) {
-	    result = found_value;
-	} else {
-	    result = UNICODE_REPLACEMENT_CHAR;
-	}
-    } else
-#endif
-    {
-	result = MapCodeValue(n + fc->shift, fc->mapping);
-    }
+    result = MapCodeValue(n + fc->shift, fc->mapping);
 
     TRACE(("FontencCharsetRecode %#x ->%#x%s\n",
 	   n,
@@ -288,33 +238,13 @@ FontencCharsetRecode(unsigned int n, const CharsetRec * self)
     return result;
 }
 
+/* The code a reverse lookup gave, if this charset can write it, else -1 */
 static int
-FontencCharsetReverse(unsigned int i, const CharsetRec * self)
+FontencCharsetCode(unsigned n, const CharsetRec * self)
 {
     const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
-    unsigned n;
     int result = -1;
-#ifdef USE_ICONV
-    int found;
-#endif
 
-    /* PATCH(fork, fallback): fc->reverse->reverse() (= luitReverse) has a bug
-     * where it returns the codepoint itself as an identity fallback when
-     * not found ("Fallback design for conversion failures" in docs/transcoder-design.md). fork-local charsets
-     * don't rely on that and instead determine this reliably via
-     * luitReverseFound(). Other upstream charsets stay stock (to minimize
-     * blast radius).
-     */
-#ifdef USE_ICONV
-    if (isFallbackManagedXlfd(fc->xlfd)) {
-	found = luitReverseFound(i, fc->reverse, &n);
-	if (!found)
-	    return -1;
-    } else
-#endif
-    {
-	n = fc->reverse->reverse(i, fc->reverse->data);
-    }
     if (n != 0 && n >= fc->shift) {
 	n -= fc->shift;
 
@@ -344,6 +274,16 @@ FontencCharsetReverse(unsigned int i, const CharsetRec * self)
 	}
 #undef IS_GL
     }
+    return result;
+}
+
+static int
+FontencCharsetReverse(unsigned int i, const CharsetRec * self)
+{
+    const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
+    int result;
+
+    result = FontencCharsetCode(fc->reverse->reverse(i, fc->reverse->data), self);
 
     TRACE(("FontencCharsetReverse %#x ->%#x%s\n",
 	   i,
@@ -352,6 +292,67 @@ FontencCharsetReverse(unsigned int i, const CharsetRec * self)
 
     return result;
 }
+
+#ifdef USE_ICONV
+/*
+ * PATCH(fork, fallback): the recode/reverse functions of a charset whose
+ * table the fork generates (builtin_fork.c), chosen when the charset is
+ * made (getFontencCharset()). A code without a character decodes to
+ * U+FFFD, and a character without a code can't be encoded (-1), where
+ * upstream's lookups take the code or character itself. The other
+ * charsets keep those, which other parts of luit rely on (see
+ * luitMapCodeValueFound() in luitconv.c, and "Fallback design for
+ * conversion failures" in docs/transcoder-design.md). The fork's tables,
+ * and luitMapCodeValueFound(), exist only with USE_ICONV.
+ */
+static int
+isForkTable(const char *xlfd)
+{
+    int n;
+
+    /* compared as findBuiltinEncoding() (luitconv.c) picks the table */
+    for (n = 0; builtin_encodings_fork[n].name != NULL; ++n) {
+	if (!lcStrCmp(xlfd, builtin_encodings_fork[n].name))
+	    return 1;
+    }
+    return 0;
+}
+
+static unsigned int
+ForkCharsetRecode(unsigned int n, const CharsetRec * self)
+{
+    const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
+    unsigned result;
+
+    if (!luitMapCodeValueFound(n + fc->shift, fc->mapping, &result))
+	result = UNICODE_REPLACEMENT_CHAR;
+
+    TRACE(("ForkCharsetRecode %#x ->%#x%s\n",
+	   n,
+	   result,
+	   (n != result) ? " map" : ""));
+
+    return result;
+}
+
+static int
+ForkCharsetReverse(unsigned int i, const CharsetRec * self)
+{
+    const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
+    unsigned n;
+    int result = -1;
+
+    if (luitReverseFound(i, fc->reverse, &n))
+	result = FontencCharsetCode(n, self);
+
+    TRACE(("ForkCharsetReverse %#x ->%#x%s\n",
+	   i,
+	   result,
+	   ((int) i != result) ? " map" : ""));
+
+    return result;
+}
+#endif /* USE_ICONV */
 
 static CharsetPtr cachedCharsets = NULL;
 
@@ -471,6 +472,12 @@ getFontencCharset(unsigned final, int type, const char *name)
 	c->final = fc->final;
 	c->recode = FontencCharsetRecode;
 	c->reverse = FontencCharsetReverse;
+#ifdef USE_ICONV
+	if (isForkTable(fc->xlfd)) {	/* PATCH(fork, fallback) */
+	    c->recode = ForkCharsetRecode;
+	    c->reverse = ForkCharsetReverse;
+	}
+#endif
 	c->data = fc;
 
 	cacheCharset(c);
@@ -681,15 +688,15 @@ static const LocaleCharsetRec localeCharsets[] =
     {"TCVN",       0, 2, "ASCII", NULL,         "TCVN",          NULL,         NULL},
 
     /* PATCH(fork, encodings): GB 2312 and EUC-KR are read as VS Code reads
-     * them: with iconv-lite's gb2312 table, and as CP949 (other_ja.c). */
+     * them: with iconv-lite's gb2312 table, and as CP949 (other_fork.c). */
     {"GB2312",     0, 1, NULL,    NULL,         NULL,            NULL,         "GB2312"},
     {"eucJP",      0, 1, "ASCII", "JIS X 0208", "JIS X 0201:GR", "JIS X 0212", NULL},
-    /* PATCH(fork, euc-jp-2007): see docs/transcoder-design.md */
+    /* PATCH(fork, eucjp): see other_fork.c */
     {"euc-jp-2007", 0, 1, NULL,    NULL,         NULL,            NULL,         "EUC-JP-2007"},
     {"eucKR",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP949"},
     {"eucCN",      0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
     {"eucTW",      0, 1, "ASCII", "CNS11643-1", "CNS11643-2",    "CNS11643-3", NULL},
-    /* PATCH(fork, big5): see other_ja.c */
+    /* PATCH(fork, big5): see other_fork.c */
     {"Big5",       0, 1, NULL,    NULL,         NULL,            NULL,         "BIG5X"},
 
     {"gbk",        0, 1, NULL,    NULL,         NULL,            NULL,         "GBK"},
@@ -697,7 +704,7 @@ static const LocaleCharsetRec localeCharsets[] =
     {"SJIS",       0, 1, NULL,    NULL,         NULL,            NULL,         "SJIS"},
     {"Big5-HKSCS", 0, 1, NULL,    NULL,         NULL,            NULL,         "BIG5-HKSCS"},
     {"gb18030",    0, 1, NULL,    NULL,         NULL,            NULL,         "GB18030"},
-    /* PATCH(fork, cp932): see other_ja.c */
+    /* PATCH(fork, cp932): see other_fork.c */
     {"CP932",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP932"},
 
     {NULL,         0, 0, NULL,    NULL,         NULL,            NULL,         NULL}

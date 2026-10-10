@@ -9,7 +9,7 @@
  * supplementary planes), this holds it compactly as contiguous ranges of
  * the linear index. The supplementary planes (U+10000-U+10FFFF) are
  * handled by a single formula (linear = cp-0x10000+189000) on the
- * other_ja.c side, so they're not included in this table.
+ * other_fork.c side, so they're not included in this table.
  *
  * Licensing: mapping data is derived from iconv-lite (MIT, Copyright (c)
  * 2011 Alexander Shtuchkin), whose multi-byte tables come from Unicode.org's

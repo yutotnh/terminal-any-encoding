@@ -83,12 +83,12 @@ FALLBACK_OUTPUT_CASES = [
 # Input direction: (encoding, input character, fallback mode, expected round-trip result)
 # An unencodable character rejects the whole chunk of input it arrived in:
 # substituting or dropping just that character would change the command the
-# shell runs (`rm <emoji>*` used to become `rm ?*` / `rm *`). The user gets
+# shell runs (`rm <emoji>*` would become `rm ?*` or `rm *`). The user gets
 # a bell (and, through -notify, a notification).
 FALLBACK_INPUT_CASES = [
     ("euc-jp-2007", "A☃B", None, "\a", "unmapped character rejects the whole input (bell only)"),
     ("CP932", "A☃B", None, "\a", "CP932 unmapped character rejects the whole input (bell only)"),
-    ("GBK", "A☃B", None, "\a", "OTHER charset path (other_ja.c) rejects too"),
+    ("GBK", "A☃B", None, "\a", "OTHER charset path (other_fork.c) rejects too"),
 ]
 
 # Input arriving in several reads after a rejection (a paste) is dropped
@@ -99,6 +99,12 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], "\a", "the rest of a split paste is dropped too"),
     ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], "\aok", "input after a pause goes through again"),
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste (the inner tty echoes ESC as ^[)"),
+    # Whether an end marker will come can't be known (the terminal may not
+    # send markers at all), so a start marker must never hold input back
+    # for longer than the pause
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], "\aok", "a start marker without an end marker doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")],
+     "^[[200~\aok", "a start marker typed key by key doesn't hold input back"),
 ]
 
 # Chinese, Korean, and single-byte encodings
@@ -182,27 +188,23 @@ INPUT_CANONICAL_BYTES_CASES = [
     ("CP932", "\\¥~‾", "5c5c7e7e", "CP932 backslash/yen and tilde/overline both encode to 0x5C/0x7E (WHATWG)"),
 ]
 
-# Regression check: confirms known-correct mappings and ASCII passthrough
-# weren't broken by the fallback patches
+# Known mappings and ASCII passthrough still work with the fork's handling
+# of codes without a character
 FALLBACK_REGRESSION_CASES = [
     ("euc-jp-2007", "Hello, World!", "Hello, World!", "multiple ASCII characters"),
     ("CP932", "Hello, World!", "Hello, World!", "ASCII works under CP932 too"),
     ("euc-jp-2007", "髙鷗①〜", "髙鷗①～", "known Japanese characters (〜 comes back as ～, how 0xA1C1 is shown)"),
     ("CP932", "髙①〜", "髙①～", "known CP932 characters (〜 comes back as ～, how 0x8160 is shown)"),
-    # The 3 encodings whose implementation the fork replaced. Patching the
-    # shared functions once broke ASCII, so ASCII passthrough is always
-    # verified.
+    # Encodings on the fork's own lookups (other_fork.c, and the fallback
+    # handling in charset.c), which must still pass ASCII through.
     ("GBK", "Hello, World!", "Hello, World!", "ASCII under GBK (implementation replaced by the fork)"),
     ("BIG5-HKSCS", "Hello, World!", "Hello, World!", "ASCII under Big5-HKSCS (implementation replaced by the fork)"),
     ("CP865", "Hello, World!", "Hello, World!", "ASCII under CP865 (under the fork's fallback management)"),
-    # Regression check for the T_128 control-range-drop fix (iso2022.c).
-    # CP437/CP865's bytes 0x82/0xA1, after applying shift (0x80), land n
-    # at 0x02 (control range) / 0x21 (GL range) respectively. Normal
-    # encoding via G0 (GL) must not restrict reverse()'s lower bound (a
-    # control-range result is legitimate there), so this had to be fixed
-    # via the write-guard/continue symmetry on the iso2022.c side instead.
-    # This confirms both boundaries (the control-range side and the
-    # GL-range side) still round-trip correctly.
+    # The T_128 control-range fix (iso2022.c): CP437/CP865's bytes
+    # 0x82/0xA1 land at n = 0x02 (control range) / 0x21 (GL range) after
+    # the shift (0x80). reverse() itself can't reject the control range (a
+    # control-range result is legitimate through G0), so copyIn() moves on
+    # only when it wrote something. Both boundaries must round-trip.
     ("CP437", "é", "é", "CP437 é (byte 0x82, n=0x02 after shift, control-range boundary)"),
     ("CP865", "í", "í", "CP865 í (byte 0xA1, n=0x21 after shift, GL-range boundary)"),
 ]
@@ -513,10 +515,11 @@ def run_inverted_tree_case() -> tuple[bool, str]:
 
 
 def run_quick_exit_case(runs: int = 2000) -> tuple[bool, str]:
-    """A command that prints and exits at once still shows its output. The
-    converter used to die with the shell's SIGHUP when it ran late (about 1
-    in 300 runs with everything on one CPU), so this runs on one CPU (where
-    the OS lets it pick one), many times."""
+    """A command that prints and exits at once still shows its output. A
+    converter that runs late can die with the shell's SIGHUP if it's still
+    in the shell's process group (about 1 in 300 runs with everything on one
+    CPU), so this runs on one CPU (where the OS lets it pick one), many
+    times."""
     pin = hasattr(os, "sched_setaffinity")
     cpu = min(os.sched_getaffinity(0)) if pin else 0
     lost = 0
@@ -548,10 +551,10 @@ def run_quick_exit_case(runs: int = 2000) -> tuple[bool, str]:
 
 def run_late_reader_quick_exit_case(runs: int = 15) -> tuple[bool, str]:
     """A command that prints and exits at once still shows its output when
-    the terminal reads it late (VS Code busy starting up). On macOS, luit's
-    wait for the output to be read was cut short by the shell's SIGCHLD, it
-    exited, and the unread output was discarded: lost in most runs with the
-    reader a second late."""
+    the terminal reads it late (VS Code busy starting up). On macOS, the
+    shell's SIGCHLD can cut luit's wait for the output to be read short
+    (EINTR); if luit then exits, the unread output is discarded, which
+    happens in most runs with the reader a second late."""
     lost = 0
     for _ in range(runs):
         pid, fd = pty.fork()
@@ -781,6 +784,31 @@ def run_mark_copy_used_case() -> tuple[bool, str]:
         os.close(fd)
         age = time.time() - os.stat(copy_dir).st_mtime
     return age < 60, f"directory last marked {age:.0f}s ago"
+
+
+def run_extension_env_removed_case() -> tuple[bool, str]:
+    """The variables the extension starts luit with (its options, and the id
+    that tells apart terminals opened from profiles) aren't passed on to the
+    shell."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["TERMINAL_ANY_ENCODING_ARGS"] = "-encoding\neuc-jp-2007\n--\n/bin/sh\n-c\nenv; echo END"
+        os.environ["TERMINAL_ANY_ENCODING_LAUNCH_ID"] = "test-id"
+        os.execv(str(LUIT), ["luit"])
+    out = b""
+    try:
+        while True:
+            chunk = os.read(fd, 1024)
+            if not chunk:
+                break
+            out += chunk
+    except OSError:
+        pass
+    os.waitpid(pid, 0)
+    os.close(fd)
+    text = out.decode("utf-8", "replace")
+    leaked = [line for line in text.splitlines() if line.startswith("TERMINAL_ANY_ENCODING_")]
+    return "END" in text and not leaked, f"leaked {leaked}" if leaked else "none leaked"
 
 
 def run_classic_tree_case() -> tuple[bool, str]:
@@ -1021,6 +1049,7 @@ def main() -> int:
             ("closing the terminal ends shell and converter", run_hangup_case, True),
             ("tab title follows the foreground program", run_title_case, True),
             ("started by the extension, marks its copy as used", run_mark_copy_used_case, False),
+            ("started by the extension, the shell doesn't inherit its variables", run_extension_env_removed_case, False),
             ("classic (no controlling terminal)", run_classic_tree_case, False)]:
         if linux_only and not sys.platform.startswith("linux"):
             print(f"SKIP {name} (Linux only)")

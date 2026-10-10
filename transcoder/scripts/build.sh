@@ -33,8 +33,8 @@ done
 cd "$SRC_DIR"
 
 # Regenerate the table-generation pipeline first if needed (normally uses the committed output)
-if [ ! -f builtin_ja.c ]; then
-  echo "builtin_ja.c not found. Run tools/gen-tables/gen_tables.py first." >&2
+if [ ! -f builtin_fork.c ]; then
+  echo "builtin_fork.c not found. Run tools/gen-tables/gen_tables.py first." >&2
   exit 1
 fi
 
