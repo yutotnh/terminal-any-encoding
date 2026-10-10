@@ -184,8 +184,10 @@ get the start of, for 2 s at most): it's most likely the start of the end
 marker, which the terminal always sends, and passing it on as text would
 leave the shell in the paste. An ESC that nothing follows for 10 ms
 outside a paste is taken for a key, so a start marker split right after its
-ESC by that long isn't one: luit can't tell the two apart. The paste state
-is reset after `-encode-last-arg` converts a task's command line.
+ESC by that long isn't one: luit can't tell the two apart. A task's
+command line (`-encode-last-arg`) isn't keyboard input: it's converted
+without any of this, its escapes and markers passed on as they are, and
+leaves the paste state alone.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a

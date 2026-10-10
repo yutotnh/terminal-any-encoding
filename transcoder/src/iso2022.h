@@ -107,14 +107,16 @@ void reportIso2022(const char *, Iso2022Ptr);
 #define MAX_ENCODED_CHAR 4
 #define CONVERTED_CHUNK_MAX (BUFFER_SIZE * MAX_ENCODED_CHAR)
 /* PATCH(fork, input rejection): the length of a bracketed paste marker,
- * and the most copyIn() queues for one chunk: a chunk's conversion and one
- * paste end marker */
+ * and the most copyIn() queues for one chunk: the chunk's conversion and
+ * what earlier chunks held, which makes a marker at most (paste markers
+ * and the start of one are as many bytes converted as they come) */
 #define PASTE_MARKER_LEN 6
 #define INPUT_PENDING_MAX (CONVERTED_CHUNK_MAX + PASTE_MARKER_LEN)
 
 /* PATCH(fork, input rejection): see copyIn() and flushHeldInput() */
 #define HOLD_MILLIS 10.0
 int copyIn(Iso2022Ptr, unsigned char *, int, double);
+int copyInText(Iso2022Ptr, unsigned char *, int);
 int inputHeld(void);
 int flushHeldInput(Iso2022Ptr, double);
 void resetPasteTracking(void);

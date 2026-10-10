@@ -491,6 +491,52 @@ escapesInRejected(void)
     }
 }
 
+/*
+ * What starts like a marker at the end of a read that went through, and
+ * goes on in a rejected read as something else: the first read's bytes go
+ * through as they came, and nothing of the second.
+ */
+static void
+heldIntoRejected(void)
+{
+    static const char *const heads[] = {
+	"\033", "\033[", "\033[2", "\033[20", "\033[200", "\033[201"
+    };
+    static const char *const tails[] = { "x", "[D", "0x", "D" };
+    static const double gaps[] = { 0.0, 5.0 };
+    int bracketed, wrapped, h, t, g;
+
+    for (bracketed = 0; bracketed <= 1; bracketed++) {
+	for (wrapped = 0; wrapped <= 1; wrapped++) {
+	    for (h = 0; h < (int) (sizeof(heads) / sizeof(heads[0])); h++) {
+		for (t = 0; t < (int) (sizeof(tails) / sizeof(tails[0])); t++) {
+		    for (g = 0; g < (int) (sizeof(gaps) / sizeof(gaps[0])); g++) {
+			Read reads[3];
+			char what[96], expect[64];
+
+			reads[0].delay = 0.0;
+			snprintf(reads[0].bytes, sizeof(reads[0].bytes), "%spq%s",
+				 wrapped ? START : "", heads[h]);
+			reads[1].delay = gaps[g];
+			snprintf(reads[1].bytes, sizeof(reads[1].bytes), "%s" SNOWMAN "rs%s",
+				 tails[t], wrapped ? END : "");
+			reads[2].delay = BOUND + 100.0;
+			strcpy(reads[2].bytes, "ok");
+			snprintf(expect, sizeof(expect), "%s%sok", reads[0].bytes, wrapped ? END : "");
+			snprintf(what, sizeof(what), "bracketed %s, %s, held %d into rejected %d, gap %.0f",
+				 bracketed ? "on" : "off", wrapped ? "pasted" : "typed", h, t, gaps[g]);
+			scenarios++;
+			setUp(bracketed);
+			feed(reads, 3);
+			if (shell_len != strlen(expect) || memcmp(shell, expect, shell_len))
+			    fail("nothing of a rejected read but its markers", what, reads, 3);
+		    }
+		}
+	    }
+	}
+    }
+}
+
 /* A key held down after a rejection, 10 ms apart: dropped for the bound,
  * then let through */
 static void
@@ -527,6 +573,7 @@ main(void)
     startForwardedPart();
     pasteAfterBound();
     escapesInRejected();
+    heldIntoRejected();
     heldKey();
     printf("%d of %d scenarios kept every rule\n", scenarios - failures, scenarios);
     return failures ? 1 : 0;

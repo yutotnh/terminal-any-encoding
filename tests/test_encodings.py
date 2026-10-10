@@ -507,6 +507,12 @@ ENCODE_LAST_ARG_CASES = [
     ("euc-jp-2007", "echo plain && exit 4", 4, "plain"),
     # Not representable: nothing runs (no RAN), luit fails and names it
     ("euc-jp-2007", "echo RAN; echo '\U0001F600'", 1, "U+1F600"),
+    # Escapes, paste markers among them, arrive as they are: a command line
+    # isn't a paste
+    ("euc-jp-2007", "printf %s '\x1b[200~a\x1b[201~' | od -An -tx1", 0, "1b 5b 32 30 30 7e 61 1b 5b 32 30 31 7e"),
+    ("euc-jp-2007", "printf %s 'a\x1b[201~' | od -An -tx1", 0, "61 1b 5b 32 30 31 7e"),
+    # (the start of a marker at the very end, which the trap shows)
+    ("euc-jp-2007", "trap 'printf %s \"$x\" | od -An -tx1' EXIT; x=a\x1b[20", 0, "61 1b 5b 32 30"),
 ]
 
 

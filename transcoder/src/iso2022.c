@@ -488,7 +488,7 @@ static unsigned chunk_rejected_char = 0;
  * doesn't read more input until it's gone (see parent() in luit.c), while
  * still reading the program's output, so neither side can deadlock.
  * copyIn() only runs once this is empty, and queues at most one chunk's
- * conversion and one end marker. */
+ * conversion and what earlier chunks held (see INPUT_PENDING_MAX). */
 static unsigned char input_pending[INPUT_PENDING_MAX];
 static size_t input_pending_len = 0;
 
@@ -646,8 +646,9 @@ trackPasteMode(const unsigned char *buf, size_t n)
     }
 }
 
-/* PATCH(fork, input rejection): forgets the paste state, for keyboard
- * input that follows something converted otherwise (encodeLastArg()) */
+/* PATCH(fork, input rejection): forgets the paste state, for
+ * tests/paste_driver.c, which runs scenarios one after another on one
+ * input state */
 void
 resetPasteTracking(void)
 {
@@ -1044,6 +1045,17 @@ convertUnit(Iso2022Ptr is, unsigned char *buf, int count)
     return rejected;
 }
 
+/* PATCH(fork, task command line): converts one chunk of input that isn't
+ * keyboard input (encodeLastArg()'s command line) as copyIn() converts
+ * text, and queues it, or returns 1 as it does. Escapes, paste markers
+ * among them, are text there, and the paste state is left alone. */
+int
+copyInText(Iso2022Ptr is, unsigned char *buf, int count)
+{
+    assert(input_pending_len == 0);
+    return convertUnit(is, buf, count);
+}
+
 /* PATCH(fork, input rejection): input between paste markers: dropped,
  * rejected (which starts a drop) or converted and queued */
 static void
@@ -1103,13 +1115,13 @@ heldContinues(unsigned char b)
     return b == PASTE_START[held_len];
 }
 
-/* Passes held input from an earlier read on as input like any other, or
- * drops it with the input it came with */
+/* Passes the first n bytes held, from earlier reads, on as input like any
+ * other, or drops them with the input they came with, and forgets what's
+ * held */
 static void
-releaseHeld(Iso2022Ptr is, double now)
+releaseHeld(Iso2022Ptr is, size_t n, double now)
 {
     unsigned char bytes[PASTE_MARKER_LEN];
-    size_t n = held_len;
 
     held_len = 0;
     if (held_dropped)
@@ -1127,13 +1139,12 @@ inputHeld(void)
 /* PATCH(fork, input rejection): passes on what's held once it has been for
  * HOLD_MILLIS if it's a lone ESC (an Escape key, most likely), or for
  * DROP_MAX_MILLIS if it's more (no key sends ESC [ 2 0 alone), returning 1
- * if it did. Not in
- * a paste: there what's held is the paste's, most likely the start of its
- * end marker, which the terminal always sends, and passing it on as text
- * would leave the shell in the paste. A shell in the paste takes an Escape
- * key as text anyway, so what's held there waits for what comes next; in a
- * paste the shell didn't get the start of (dropped), for DROP_MAX_MILLIS
- * from its start at most, in case no end marker comes. */
+ * if it did. Not in a paste: there what's held is the paste's, most likely
+ * the start of its end marker, which the terminal always sends, and passing
+ * it on as text would leave the shell in the paste. A shell in the paste
+ * takes an Escape key as text anyway, so what's held there waits for what
+ * comes next; in a paste the shell didn't get the start of (dropped), for
+ * DROP_MAX_MILLIS from its start at most, in case no end marker comes. */
 int
 flushHeldInput(Iso2022Ptr is, double now)
 {
@@ -1142,7 +1153,7 @@ flushHeldInput(Iso2022Ptr is, double now)
     if (held_len == 0 || now - held_since < hold || paste_open
 	|| (in_paste && now - paste_started < DROP_MAX_MILLIS))
 	return 0;
-    releaseHeld(is, now);
+    releaseHeld(is, held_len, now);
     return 1;
 }
 
@@ -1155,15 +1166,16 @@ flushHeldInput(Iso2022Ptr is, double now)
  * convertUnit()), escapes in it included, and what follows it dropped (see
  * DROP_MAX_MILLIS). What's held at the chunk's end (see flushHeldInput())
  * goes with the part before it: if it isn't a marker, it's dropped if that
- * part was, or else passed on by itself, as the start of the next chunk
- * would be. Returns 1 if anything was rejected (the caller rings the bell),
- * with the first character that couldn't be encoded in
+ * part was, or else passed on by itself, and what the next chunk added to
+ * it goes with that chunk. Returns 1 if anything was rejected (the caller
+ * rings the bell), with the first character that couldn't be encoded in
  * input_unencodable_char.
  */
 int
 copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 {
     size_t n = (size_t) count, from = 0, held_at = 0, k;
+    size_t carried = held_len;	/* held from earlier chunks */
     int held_here = 0;		/* what's held starts at buf + held_at */
 
     assert(count <= BUFFER_SIZE);
@@ -1192,8 +1204,7 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 		held_len = 0;	/* part of the text from `from` */
 		held_here = 0;
 	    } else {
-		releaseHeld(is, now);
-		from = k;
+		releaseHeld(is, carried, now);	/* buf from 0 is text */
 	    }
 	}
 	if (b == ESC) {

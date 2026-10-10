@@ -836,7 +836,7 @@ expandArgsFromEnv(int *argcp, char ***argvp)
 /*
  * PATCH(fork, task command line): with -encode-last-arg, converts the last
  * argument -- the command line of a VS Code task, which VS Code passes in
- * UTF-8 -- into the encoding the way typed input is converted (copyIn(),
+ * UTF-8 -- into the encoding the way typed input is converted (copyInText(),
  * on the input state nothing has been typed into yet), so the shell gets
  * what it would have if the line had been typed in this terminal. Earlier
  * arguments (the profile's, VS Code's shell-integration script paths) name
@@ -856,14 +856,14 @@ encodeLastArg(int argc, char **argv)
     arg = (unsigned char *) argv[argc - 1];
     len = strlen((char *) arg);
     chunks = (len + BUFFER_SIZE - 1) / BUFFER_SIZE;
-    encoded = malloc(chunks * INPUT_PENDING_MAX + PASTE_MARKER_LEN + 1);
+    encoded = malloc(chunks * CONVERTED_CHUNK_MAX + 1);
     if (encoded == NULL) {
 	perror("Couldn't convert the command line");
 	ExitFailure();
     }
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	if (copyIn(inputState, arg + done, (int) n, 0.0)) {
+	if (copyInText(inputState, arg + done, (int) n)) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
@@ -871,11 +871,7 @@ encodeLastArg(int argc, char **argv)
 	size += takeInput(encoded + size);
 	done += n;
     }
-    /* an ESC at the end, held as copyIn() holds one (see flushHeldInput()) */
-    (void) flushHeldInput(inputState, HOLD_MILLIS);
-    size += takeInput(encoded + size);
     encoded[size] = '\0';
-    resetPasteTracking();	/* the command line isn't keyboard input */
     encoded_arg = encoded;
     argv[argc - 1] = (char *) encoded;
 }
