@@ -30,6 +30,8 @@
     "SIGWINCH",
     "asan",
     "ubsan",
+    "mmap",
+    "mktemp",
     "musl",
     "armhf",
     "openpty",

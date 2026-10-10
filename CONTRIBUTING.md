@@ -68,15 +68,22 @@ python3 tests/test_editor_parity.py
 # Checks CI also runs on the transcoder (see scripts/build.sh):
 # compiler warnings beyond upstream's known ones fail the build, and the
 # tests under AddressSanitizer, UBSan and LeakSanitizer must leave no
-# report (luit's stderr is the terminal, so reports go to files)
+# report (luit's stderr is the terminal, so reports go to files). On
+# kernels with high mmap randomization (e.g. Ubuntu 24.04), ASan needs
+# `sudo sysctl -w vm.mmap_rnd_bits=28` first. Rebuild without
+# --sanitize afterwards: the tests and transcoder/bin take src/luit.
 bash transcoder/scripts/build.sh --warnings
-mkdir -p /tmp/luit-sanitizers
-export ASAN_OPTIONS=detect_leaks=1:log_path=/tmp/luit-sanitizers/asan
-export UBSAN_OPTIONS=print_stacktrace=1:log_path=/tmp/luit-sanitizers/ubsan
-bash transcoder/scripts/build.sh --sanitize
-python3 tests/test_encodings.py
-python3 tests/test_editor_parity.py
-ls /tmp/luit-sanitizers               # must be empty
+reports="$(mktemp -d)"
+(
+  export ASAN_OPTIONS="detect_leaks=1:log_path=$reports/asan"
+  export UBSAN_OPTIONS="print_stacktrace=1:log_path=$reports/ubsan"
+  bash transcoder/scripts/build.sh --sanitize --warnings
+  python3 tests/test_encodings.py
+  python3 tests/test_editor_parity.py
+)
+sleep 5        # the converter luit detaches reports when it exits
+ls "$reports"                          # must be empty
+bash transcoder/scripts/build.sh
 
 # Reproducibility check for the conversion tables
 python3 tools/gen-tables/gen_tables.py --check

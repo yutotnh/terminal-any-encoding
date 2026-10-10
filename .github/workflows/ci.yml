@@ -106,18 +106,29 @@ jobs:
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
+      # With --warnings too, for the code only --disable-leaks builds
       - name: Build transcoder with sanitizers
-        run: bash transcoder/scripts/build.sh --sanitize
+        run: bash transcoder/scripts/build.sh --sanitize --warnings
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
       - name: Compare every encoding with VS Code's editor
         timeout-minutes: 15
         run: python3 tests/test_editor_parity.py
       # A report doesn't always fail a test (it can come from a process the
-      # test doesn't wait for), so any report fails the job
+      # test doesn't wait for, such as the converter luit detaches, which
+      # writes its report when it exits), so any report fails the job, once
+      # every luit has exited. One still running by then is a bug too.
       - name: Fail on any sanitizer report
         if: always()
         run: |
+          for _ in $(seq 30); do
+            pgrep -x luit >/dev/null || break
+            sleep 1
+          done
+          if pgrep -a -x luit; then
+            echo "luit still running 30 s after the tests" >&2
+            exit 1
+          fi
           shopt -s nullglob
           reports=("$RUNNER_TEMP"/sanitizers/*)
           if [ "${#reports[@]}" -gt 0 ]; then
