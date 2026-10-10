@@ -41,8 +41,9 @@ jobs:
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
+      # Fails on a compiler warning upstream's code doesn't already have
       - name: Build transcoder
-        run: bash transcoder/scripts/build.sh
+        run: bash transcoder/scripts/build.sh --warnings
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
       - name: Compare every encoding with VS Code's editor
@@ -66,13 +67,61 @@ jobs:
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
+      # With clang, which gets the same warnings as gcc does on Linux
       - name: Build transcoder
-        run: bash transcoder/scripts/build.sh
+        run: bash transcoder/scripts/build.sh --warnings
       - name: Run table-driven tests
         run: python3 tests/test_encodings.py
       - name: Compare every encoding with VS Code's editor
         timeout-minutes: 10
         run: python3 tests/test_editor_parity.py
+
+  # luit converts whatever bytes programs print and whatever is typed, in
+  # fixed-size buffers. The test suites run it through every encoding's
+  # every byte sequence, so under AddressSanitizer, UBSan and LeakSanitizer
+  # they also check it for out-of-bounds access, undefined behavior and
+  # leaks. Linux only: LeakSanitizer doesn't run on macOS.
+  sanitizers:
+    name: Transcoder under ASan + UBSan + LSan
+    runs-on: ubuntu-24.04
+    env:
+      # Reports go to files: luit's stderr is the terminal, where the tests
+      # wouldn't see them
+      ASAN_OPTIONS: detect_leaks=1:log_path=${{ runner.temp }}/sanitizers/asan
+      UBSAN_OPTIONS: print_stacktrace=1:log_path=${{ runner.temp }}/sanitizers/ubsan
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential autoconf
+          mkdir -p "$RUNNER_TEMP/sanitizers"
+      # ASan's shadow memory can't be placed with the kernel's highest
+      # mmap randomization
+      - name: Lower ASLR entropy for ASan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: ./.nvmrc
+      - run: npm ci --ignore-scripts
+      - name: Build transcoder with sanitizers
+        run: bash transcoder/scripts/build.sh --sanitize
+      - name: Run table-driven tests
+        run: python3 tests/test_encodings.py
+      - name: Compare every encoding with VS Code's editor
+        timeout-minutes: 15
+        run: python3 tests/test_editor_parity.py
+      # A report doesn't always fail a test (it can come from a process the
+      # test doesn't wait for), so any report fails the job
+      - name: Fail on any sanitizer report
+        if: always()
+        run: |
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/sanitizers/*)
+          if [ "${#reports[@]}" -gt 0 ]; then
+            cat "${reports[@]}"
+            exit 1
+          fi
 
   spellcheck:
     name: Spell check (Japanese docs excluded)

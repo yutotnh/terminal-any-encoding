@@ -65,6 +65,19 @@ bash transcoder/scripts/build.sh --musl
 python3 tests/test_encodings.py
 python3 tests/test_editor_parity.py
 
+# Checks CI also runs on the transcoder (see scripts/build.sh):
+# compiler warnings beyond upstream's known ones fail the build, and the
+# tests under AddressSanitizer, UBSan and LeakSanitizer must leave no
+# report (luit's stderr is the terminal, so reports go to files)
+bash transcoder/scripts/build.sh --warnings
+mkdir -p /tmp/luit-sanitizers
+export ASAN_OPTIONS=detect_leaks=1:log_path=/tmp/luit-sanitizers/asan
+export UBSAN_OPTIONS=print_stacktrace=1:log_path=/tmp/luit-sanitizers/ubsan
+bash transcoder/scripts/build.sh --sanitize
+python3 tests/test_encodings.py
+python3 tests/test_editor_parity.py
+ls /tmp/luit-sanitizers               # must be empty
+
 # Reproducibility check for the conversion tables
 python3 tools/gen-tables/gen_tables.py --check
 ```

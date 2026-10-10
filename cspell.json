@@ -28,6 +28,8 @@
     "macroman",
     "MACROMAN",
     "SIGWINCH",
+    "asan",
+    "ubsan",
     "musl",
     "armhf",
     "openpty",
