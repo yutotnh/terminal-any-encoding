@@ -119,6 +119,7 @@ int copyIn(Iso2022Ptr, unsigned char *, int, double);
 int copyInText(Iso2022Ptr, unsigned char *, int);
 int inputHeld(void);
 int flushHeldInput(Iso2022Ptr, double);
+double inputClock(double);
 void resetPasteTracking(void);
 /* PATCH(fork, input rejection): see copyIn() */
 extern unsigned input_unencodable_char;

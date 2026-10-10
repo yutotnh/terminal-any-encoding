@@ -1223,11 +1223,6 @@ parent(int sfd, int pty)
     int i;
     int rc;
     double title_due = 0.0;
-    /* PATCH(fork, input rejection): the time input waited for the pty to
-     * take what was converted before, which copyIn()'s clock leaves out:
-     * the rest of a paste waiting for a busy program isn't late */
-    double blocked = 0.0;
-    double blocked_since = -1.0;
 
     if (pipe_option) {
 	read_waitpipe(c2p_waitpipe);
@@ -1282,16 +1277,9 @@ parent(int sfd, int pty)
 	     * flushInput() in iso2022.c). */
 	    if ((rc & IO_PtyWritable) && flushInput(pty, 0) < 0)
 		break;
-	    {
-		double now = monotonicMillis();
-		if (inputPending()) {
-		    if (blocked_since < 0.0)
-			blocked_since = now;
-		} else if (blocked_since >= 0.0) {
-		    blocked += now - blocked_since;
-		    blocked_since = -1.0;
-		}
-	    }
+	    /* PATCH(fork, input rejection): input may have started or
+	     * stopped waiting for the pty (see inputClock()) */
+	    (void) inputClock(monotonicMillis());
 	    if ((rc & IO_CanRead) && !inputPending()) {
 		i = (int) read(sfd, buf, (size_t) BUFFER_SIZE);
 		if ((i == 0) || ((i < 0) && (errno != EAGAIN)))
@@ -1301,7 +1289,7 @@ parent(int sfd, int pty)
 		     * character is rejected as a whole, and the rest of a
 		     * paste after it dropped (see copyIn); the user gets a
 		     * bell for the rejection */
-		    if (copyIn(inputState, buf, i, monotonicMillis() - blocked)) {
+		    if (copyIn(inputState, buf, i, inputClock(monotonicMillis()))) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
@@ -1311,7 +1299,7 @@ parent(int sfd, int pty)
 	    }
 	}
 	if (!inputPending()
-	    && flushHeldInput(inputState, monotonicMillis() - blocked)
+	    && flushHeldInput(inputState, inputClock(monotonicMillis()))
 	    && flushInput(pty, 0) < 0)
 	    break;
     }
