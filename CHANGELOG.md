@@ -12,6 +12,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Output in single-byte encodings (Windows code pages, ISO 8859, KOI8, DOS
   code pages and so on) is converted two to four times as fast, depending
   on the text.
+- A pasted text that is rejected now reaches a shell that uses bracketed
+  paste as an empty paste, and the Escape key pressed alone is sent up to
+  10 ms later.
 
 ### Fixed
 

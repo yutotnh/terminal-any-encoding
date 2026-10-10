@@ -11,8 +11,9 @@
  * Input is ASCII but for the snowman (U+2603, which EUC-JP can't
  * represent), so what the shell gets is the same bytes: paste content is
  * the letters p-z, typed input "ok", and the only ESC, digits and '~' are
- * the paste markers', but in escapesInRejected(), which checks what the
- * shell gets as a whole.
+ * the paste markers' in the scenarios checkShell() checks. The others,
+ * with keys' escapes, U+3042 or the start of a marker in them, check what
+ * the shell gets as a whole.
  */
 #include <stdio.h>
 #include <stdlib.h>
