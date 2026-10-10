@@ -307,12 +307,6 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
 
 ## Known upstream bugs and fixes
 
-- `initializeBuiltInTable()` in `luitconv.c` wrote each row's text through
-  `malloc()`'s result unchecked. Now the table isn't loaded then, as when
-  any other part of it can't be allocated: luit goes on without that
-  charset. Tables are also loaded mid-session (a charset a program
-  designates), so stopping luit isn't an option, and leaving the row out
-  would leave its code point encoding to bytes that don't decode.
 - `allocatePty()` in `sys.c`, `openpty()` path: `openpty()` also opens the
   slave side, and only the child closed it (in `openTty()`). The parent
   kept it open, so the master never saw EOF/EIO when the shell exited and
