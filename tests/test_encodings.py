@@ -99,6 +99,12 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], "\a", "the rest of a split paste is dropped too"),
     ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], "\aok", "input after a pause goes through again"),
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste (the inner tty echoes ESC as ^[)"),
+    # Whether an end marker will come can't be known (the terminal may not
+    # send markers at all), so a start marker must never hold input back
+    # for longer than the pause
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], "\aok", "a start marker without an end marker doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")],
+     "^[[200~\aok", "a start marker typed key by key doesn't hold input back"),
 ]
 
 # Chinese, Korean, and single-byte encodings

@@ -132,8 +132,13 @@ converted. A paste can arrive in several reads, so input is also dropped until
 it pauses for 50 ms after a rejection (forwarding only the tail of a paste
 could run a different command), and if a bracketed paste (`ESC [200~`) was
 already forwarded, its end marker is still passed through so the shell doesn't
-stay in paste mode. Warning on stderr instead isn't an option either: the
-messages would be mixed into the terminal output.
+stay in paste mode. Both have gaps: the rest of a paste arriving after the
+pause gets through, and markers are only recognized whole within one read.
+Dropping up to the end marker instead would have to be bounded, as luit
+can't know that one will come (the terminal may not send markers at all,
+e.g. with `terminal.integrated.ignoreBracketedPasteMode`). Warning on stderr
+instead isn't an option either: the messages would be mixed into the
+terminal output.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a

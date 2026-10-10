@@ -10,7 +10,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Output in single-byte encodings (Windows code pages, ISO 8859, KOI8, DOS
-  code pages and so on) is converted about three times as fast.
+  code pages and so on) is converted two to four times as fast, depending
+  on the text.
 
 ### Fixed
 
