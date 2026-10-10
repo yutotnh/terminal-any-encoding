@@ -31,13 +31,12 @@
  * match glibc's actual notation (iso88591, euckr, etc.) once normalized
  * (lowercased + non-alphanumerics stripped)).
  *
- * Only these 3 need an explicit override:
- *   - "euc-jp-2007": the luitEncoding string itself isn't glibc's charmap
- *     name (the actual charmap name is "EUC-JP").
- *   - "CP932": there's no standard charmap, but some distros generate their
- *     own locales like `ja_JP.sjis` (confirmed on real hardware), so try a
- *     few aliases.
- *   - "MACROMAN": glibc's charmap name is "MACINTOSH".
+ * The exceptions:
+ *   - "euc-jp-2007": glibc's charmap is "EUC-JP".
+ *   - "CP932": glibc has no standard charmap, but some distributions
+ *     generate their own locales like `ja_JP.sjis`, so a few aliases are
+ *     tried.
+ *   - "MACROMAN": glibc's charmap is "MACINTOSH".
  */
 const CODESET_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "euc-jp-2007": ["EUC-JP"],
@@ -46,12 +45,10 @@ const CODESET_ALIASES: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * Table of, per luitEncoding, a region confirmed to actually be in glibc's
- * SUPPORTED list (`xx_YY` form, without the charset part). Used as a
- * fallback region candidate (lowest priority). Encodings not in this table
- * (CP932 and the 7 DOS-family code pages) have no corresponding glibc
- * charmap, or can only rely on host-specific generation, so they have no
- * fallback region.
+ * Per luitEncoding, a region glibc's SUPPORTED list has a locale for in
+ * that encoding (`xx_YY`, without the charset part): the last region tried.
+ * Encodings missing here (CP932, CP874 and the DOS code pages) have no such
+ * locale in glibc, only ones some hosts generate themselves.
  */
 const KNOWN_GOOD_TERRITORY: Readonly<Record<string, string>> = {
   "euc-jp-2007": "ja_JP",
@@ -290,8 +287,8 @@ export function resolveLocaleEnv(
 
 /**
  * A locale name worth suggesting to generate when there's no match, or
- * undefined when glibc has no standard locale for this encoding (CP932 and
- * the DOS code pages).
+ * undefined when glibc has no standard locale for this encoding (see
+ * KNOWN_GOOD_TERRITORY).
  */
 export function suggestLocaleName(luitEncoding: string): string | undefined {
   const territory = KNOWN_GOOD_TERRITORY[luitEncoding];

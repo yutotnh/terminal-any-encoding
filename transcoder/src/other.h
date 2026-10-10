@@ -76,14 +76,9 @@ typedef struct {
     int buf_ptr;
 } aux_gb18030;
 
-/* PATCH(fork, cp932): CP932 (Windows-31J) direct-lookup state.
- * Deliberately NOT reusing aux_sjis: mapping_sjis()'s SJIS->JIS coordinate
- * formula only covers the base 94-row JIS X 0208 grid and produces
- * out-of-range rows for the IBM-extension lead bytes (0xFA-0xFC) and
- * NEC-selected-IBM bytes (0xED-0xEE) -- see docs/transcoder-design.md.
- * aux_cp932 instead does a flat 2-byte-code -> Unicode table lookup
- * (same shape as aux_hkscs), generated from VS Code's Shift JIS (CP932)
- * table, so no coordinate transform is needed. */
+/* PATCH(fork, cp932): CP932 (Windows-31J), looked up by its 2-byte codes
+ * in one table rather than converted to JIS X 0208 like aux_sjis (see
+ * other_ja.c) */
 typedef struct {
     FontMapPtr mapping;
     FontMapReversePtr reverse;
@@ -120,6 +115,10 @@ typedef union {
  * does. -1 still means "more bytes needed". */
 #define OTHER_INVALID (-2)
 
+/* PATCH(fork, invalid sequences): what a code without a character decodes
+ * to, as in VS Code's editor */
+#define UNICODE_REPLACEMENT_CHAR 0xFFFD
+
 int init_gbk(OtherStatePtr);
 UINT mapping_gbk(UINT, OtherStatePtr);
 UINT reverse_gbk(UINT, OtherStatePtr);
@@ -146,22 +145,15 @@ UINT mapping_cp932(UINT, OtherStatePtr);
 UINT reverse_cp932(UINT, OtherStatePtr);
 int stack_cp932(UINT, OtherStatePtr);
 
-/* PATCH(fork, gb18030): the GB18030 4-byte-capable version. stack reuses
- * other.c's stack_gb18030() as-is (its linear-index computation is already
- * correct); only init/mapping/reverse are replaced. No new union member is
- * needed since it uses the same aux_gb18030 (s->gb18030). See the comment
- * at the top of other_ja.c for details.
- */
+/* PATCH(fork, gb18030): GB18030 with its 4-byte codes, on aux_gb18030 and
+ * upstream's stack_gb18030() (see other_ja.c) */
 int init_gb18030x(OtherStatePtr);
 UINT mapping_gb18030x(UINT, OtherStatePtr);
 UINT reverse_gb18030x(UINT, OtherStatePtr);
 
 /* PATCH(fork, fallback): GBK, GB 2312, CP949 (EUC-KR) and Big5-HKSCS from
- * the fork's tables, handling unmapped codes explicitly instead of
- * upstream's identity fallback (see other_ja.c). stack reuses other.c's
- * stack_gbk/stack_hkscs with aux_gbk/aux_hkscs, so no new union member is
- * needed.
- */
+ * the fork's tables, on aux_gbk/aux_hkscs and upstream's
+ * stack_gbk/stack_hkscs (see other_ja.c) */
 int init_gbkx(OtherStatePtr);
 UINT mapping_gbkx(UINT, OtherStatePtr);
 UINT reverse_gbkx(UINT, OtherStatePtr);

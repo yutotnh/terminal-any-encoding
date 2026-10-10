@@ -22,21 +22,16 @@ test("uses the bundled binary if it's executable", () => {
   fs.writeFileSync(binPath, "#!/bin/sh\necho ok\n");
   fs.chmodSync(binPath, 0o755);
 
-  const result = resolveTranscoder(dir);
-  assert.strictEqual(result.ok, true);
-  assert.strictEqual(result.location?.path, binPath);
+  assert.deepStrictEqual(resolveTranscoder(dir), { ok: true, path: binPath });
 });
 
 test("returns the expected path when there's no bundled binary", () => {
   const dir = makeTempDir();
-  const result = resolveTranscoder(dir);
-  assert.strictEqual(result.ok, false);
-  // Building the display string (localization) is the vscode-dependent
-  // extension.ts's job, so only structured data is verified here.
-  assert.strictEqual(
-    result.missingPath,
-    path.join(dir, "transcoder", "bin", "luit"),
-  );
+  // Building the message (localization) is extension.ts's job
+  assert.deepStrictEqual(resolveTranscoder(dir), {
+    ok: false,
+    missingPath: path.join(dir, "transcoder", "bin", "luit"),
+  });
 });
 
 test("installTranscoderCopy: one copy per content, never overwritten, so each terminal keeps the transcoder it was created with", () => {

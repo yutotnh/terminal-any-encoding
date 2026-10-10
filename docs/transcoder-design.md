@@ -171,7 +171,10 @@ happened once and had to be reverted). Instead, the design is:
    without any fallback.
 3. Use these new functions only from the call sites of charsets added by the
    fork (`FontencCharsetRecode`/`FontencCharsetReverse` in `charset.c`,
-   `mapping_cp932`/`reverse_cp932` in `other_ja.c`, etc.).
+   and every `mapping_*`/`reverse_*` in `other_ja.c`). The `other_ja.c`
+   ones return `U+FFFD` for a code without a character, and 0 for a
+   character without a code, which `copyIn()` rejects (0 is also what
+   upstream's `reverse_gb18030()` returns when it finds nothing).
 
 Stock upstream charsets (ones the fork hasn't replaced the tables for) are
 out of scope for this policy and keep their old identity-fallback behavior.
@@ -280,8 +283,10 @@ macOS.
   even when the reverse lookup failed (asymmetric with the matching G2
   block). With encodings where `IF_SS` is active (EUC-family encodings in
   general), characters absent from G1/G2/G3 couldn't reach the fallback
-  path. Fixed it to match G2's symmetric behavior. The same kind of bug
-  existed on the CP932 side too (via `OTHER`).
+  path. Fixed it to match G2's symmetric behavior. Its `OTHER` block had
+  the same kind of bug: it moved on when the charset's reverse function
+  found no code (0) and wrote nothing, so the character vanished. It now
+  rejects the input.
 - Even after that fix, the T_128 charset (CP852 etc., `shift`=0x80) still had
   the same symptom (silent disappearance) via a different code path: because
   some source bytes map, after applying shift, into the control range

@@ -1,33 +1,27 @@
 /**
- * Definition and validation of supported encodings.
+ * The supported encodings, and validation of encoding ids.
  *
- * Any string not listed here is rejected before launch (never open a
- * terminal with an unknown encoding name; raise an explicit error instead).
- *
- * Only lists encodings the transcoder has actually been verified to convert
- * correctly (see docs/transcoder-design.md). Variants (e.g. EUC-JP-MS) aren't
- * offered, so Japanese has only one entry each for euc-jp-2007 / CP932.
- *
- * **Covers all 45 non-UTF encodings VS Code supports**, with the transcoder
- * converting them as VS Code's editor does (its tables come from iconv-lite;
- * see docs/transcoder-design.md).
+ * These are the encodings VS Code's files.encoding offers, except the
+ * Unicode ones, and the transcoder converts each the way VS Code's editor
+ * does (its tables come from iconv-lite; see docs/transcoder-design.md).
+ * Variants VS Code doesn't have (e.g. EUC-JP-MS) aren't offered. An id not
+ * listed here is an error: no terminal is opened for it.
  */
 
 export interface EncodingDefinition {
   /** Stable identifier used in settings and command arguments */
   readonly id: string;
-  /** Label shown in the QuickPick etc. (follows VS Code core's SUPPORTED_ENCODINGS labelLong) */
+  /** Label shown in the QuickPick etc. (VS Code core's SUPPORTED_ENCODINGS labelLong) */
   readonly label: string;
   /** The `-encoding` value passed to the transcoder */
   readonly luitEncoding: string;
 }
 
-// Ordered the same way as VS Code core's SUPPORTED_ENCODINGS
-// (vs/workbench/services/textfile/common/encoding.ts). To match the same
-// order as the files.encoding dropdown, this is that same order with the 4
-// entries this extension doesn't offer (utf8/utf8bom/utf16le/utf16be)
-// removed. UTF-8 would just open the same terminal as `+`. A test pins the package.json side (terminal profiles / enum /
-// enumDescriptions) to match this order.
+// In the files.encoding dropdown's order: VS Code core's SUPPORTED_ENCODINGS
+// (vs/workbench/services/textfile/common/encoding.ts) without the Unicode
+// entries (utf8/utf8bom/utf16le/utf16be; UTF-8 would just open the same
+// terminal as `+`). Tests keep package.json's lists of encodings (the
+// defaultEncoding setting's and the task type's) in this order.
 export const ENCODINGS: readonly EncodingDefinition[] = [
   {
     id: "windows1252",
@@ -197,26 +191,12 @@ export function getEncoding(id: string): EncodingDefinition | undefined {
   return ENCODING_BY_ID.get(id);
 }
 
-export function isKnownEncoding(id: string): boolean {
-  return ENCODING_BY_ID.has(id);
-}
-
-export function listEncodingIds(): readonly string[] {
-  return ENCODINGS.map((e) => e.id);
-}
-
-/** Indicates an unknown encoding id was specified. The vscode-dependent caller (extension.ts) builds the display text */
+/** An unknown encoding id; the caller builds the message */
 export interface UnknownEncodingReason {
   readonly id: string;
 }
 
-/**
- * Validates the encoding name before launch.
- * Returns a failure with a reason when unknown (the caller doesn't open a
- * terminal and presents this reason to the user). This module
- * doesn't depend on vscode, so it returns only structured data, not a
- * display string.
- */
+/** Looks up an encoding id; the caller tells the user when it's unknown */
 export function validateEncodingId(
   id: string,
 ):

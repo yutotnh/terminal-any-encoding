@@ -1,29 +1,21 @@
 /**
- * Detects the bundled transcoder (luit fork) binary.
+ * Locates the bundled transcoder (luit fork) and manages the copies and
+ * links terminals launch it through.
  *
- * Distribution uses VS Code's per-platform VSIXes. Since each VSIX bundles exactly one binary for its
- * own platform at `transcoder/bin/luit` (see release.yml), no platform
- * detection is needed here at runtime — just checking the fixed path exists
- * is enough.
- *
- * Windows isn't supported, so the .exe extension isn't handled.
+ * Each per-platform VSIX bundles the binary for its own platform at
+ * `transcoder/bin/luit` (see release.yml), so there's nothing to detect at
+ * runtime. Windows isn't supported, so there's no `.exe`.
  */
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
-export interface TranscoderLocation {
-  readonly path: string;
-}
+export type TranscoderResolution =
+  | { readonly ok: true; readonly path: string }
+  /** The path the binary should be at; the caller builds the message */
+  | { readonly ok: false; readonly missingPath: string };
 
-export interface TranscoderResolution {
-  readonly ok: boolean;
-  readonly location?: TranscoderLocation;
-  /** When ok=false, the expected binary path. The vscode-dependent caller (extension.ts) builds the display text */
-  readonly missingPath?: string;
-}
-
-function isExecutableFile(p: string): boolean {
+export function isExecutableFile(p: string): boolean {
   try {
     const st = fs.statSync(p);
     if (!st.isFile()) return false;
@@ -35,17 +27,14 @@ function isExecutableFile(p: string): boolean {
 }
 
 /**
- * Resolves the transcoder's location.
- *
- * @param extensionPath The extension's install directory (context.extensionPath)
+ * The bundled transcoder in the extension's install directory
+ * (context.extensionPath)
  */
 export function resolveTranscoder(extensionPath: string): TranscoderResolution {
   const bundled = path.join(extensionPath, "transcoder", "bin", "luit");
-  if (isExecutableFile(bundled)) {
-    return { ok: true, location: { path: bundled } };
-  }
-
-  return { ok: false, missingPath: bundled };
+  return isExecutableFile(bundled)
+    ? { ok: true, path: bundled }
+    : { ok: false, missingPath: bundled };
 }
 
 /**

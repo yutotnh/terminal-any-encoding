@@ -101,7 +101,7 @@ typedef struct {
     unsigned target;
 } BuiltInMapping;
 
-/* PATCH(fork): flag in BuiltInMapping.target for a decode-only row (see
+/* PATCH(fork, builtin tables): flag in BuiltInMapping.target for a decode-only row (see
  * initializeBuiltInTable() in luitconv.c and tools/gen-tables/gen_tables.py). */
 #define BUILTIN_DECODE_ONLY 0x80000000u
 

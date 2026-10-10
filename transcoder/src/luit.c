@@ -57,14 +57,15 @@ static char *child_argv0 = NULL;
 static const char *locale_name = NULL;
 /* PATCH(fork, input rejection): where to report rejected input (-notify) */
 static const char *notify_path = NULL;
-/* PATCH(fork, title): see updateTitle() */
+/* PATCH(fork, title): see claimTitleArea() and updateTitle() */
 static const char *title_suffix = NULL;
-/* PATCH(fork, task command line): see encodeLastArg() */
-static int encode_last_arg = 0;
 static char *title_area = NULL;
 static size_t title_area_len = 0;
-/* The pid VS Code knows this terminal by: luit's, or the shell's when the
- * process tree is inverted (see condomInverted) */
+/* PATCH(fork, task command line): see encodeLastArg() */
+static int encode_last_arg = 0;
+/* PATCH(fork, inverted tree): the shell's pid, which VS Code knows this
+ * terminal by, when the process tree is inverted (see condomInverted);
+ * 0 in the classic layout, where that pid is luit's own */
 static long terminal_pid = 0;
 static int exitOnChild = 0;
 static int converter = 0;
@@ -78,14 +79,12 @@ int olog = -1;
 int verbose = 0;
 int ignore_locale = 0;
 int fill_fontenc = 0;
-int input_unencodable = 0;
-unsigned input_unencodable_char = 0;
 
 #ifdef USE_ICONV
 /* PATCH(fork, built-in tables only): upstream also looks in the system's
  * ".enc" files (fontenc, first), the C library's iconv, and finally takes
  * bytes as code points (posix). What those give depends on the machine:
- * with X11's font encodings installed, gbk-0 and big5hkscs-0 decoded with
+ * with X11's font encodings installed, gbk-0 and big5hkscs-0 decode with
  * their data instead of ours, and musl's iconv, which the distributed
  * binaries have, knows none of CP1253/1254/1256/1257/1258/874. Every
  * charset the supported encodings use has a built-in table (builtin.c or
@@ -667,8 +666,8 @@ claimTitleArea(int *argcp, char ***argvp)
 
 #define TITLE_MARKER "[terminal-any-encoding]"
 
-/* Called on every pass of the I/O loop; renames luit when the inner
- * foreground program changes */
+/* Renames luit when the inner foreground program changes; parent() calls
+ * it every TITLE_POLL_MILLIS */
 static void
 updateTitle(int pty)
 {
@@ -731,6 +730,10 @@ updateTitle(int pty)
  * variable is removed so the shell doesn't inherit it.
  */
 #define ARGS_ENV "TERMINAL_ANY_ENCODING_ARGS"
+/* Set by the extension to tell apart the terminals it opens from profiles
+ * (see showWhenOpened in extension.ts); removed too, as it means nothing
+ * to the shell */
+#define LAUNCH_ID_ENV "TERMINAL_ANY_ENCODING_LAUNCH_ID"
 
 /*
  * PATCH(fork, copies): the extension keeps one copy of luit per version, in
@@ -769,6 +772,7 @@ expandArgsFromEnv(int *argcp, char ***argvp)
     int n = 0;
     int k;
 
+    unsetenv(LAUNCH_ID_ENV);
     if (value == NULL)
 	return;
     copy = strmalloc(value);
@@ -815,42 +819,31 @@ static void
 encodeLastArg(int argc, char **argv)
 {
     unsigned char *arg;
-    size_t len, done;
-    FILE *tmp;
-    int fd;
-    off_t size;
-    char *encoded;
+    size_t len, done, chunks, size = 0;
+    unsigned char *encoded;
 
     if (argc < 2)		/* the program alone, no argument */
 	return;
     arg = (unsigned char *) argv[argc - 1];
     len = strlen((char *) arg);
-    tmp = tmpfile();
-    if (tmp == NULL) {
+    chunks = (len + BUFFER_SIZE - 1) / BUFFER_SIZE;
+    encoded = malloc(chunks * CONVERTED_CHUNK_MAX + 1);
+    if (encoded == NULL) {
 	perror("Couldn't convert the command line");
 	ExitFailure();
     }
-    fd = fileno(tmp);
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	if (copyIn(inputState, fd, arg + done, (int) n, 0)) {
+	if (copyIn(inputState, arg + done, (int) n, 0)) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
 	}
-	IGNORE_RC(flushInput(fd, 1));
+	size += takeInput(encoded + size);
 	done += n;
     }
-    size = lseek(fd, 0, SEEK_END);
-    encoded = (size >= 0) ? malloc((size_t) size + 1) : NULL;
-    if (encoded == NULL
-	|| pread(fd, encoded, (size_t) size, 0) != (ssize_t) size) {
-	perror("Couldn't convert the command line");
-	ExitFailure();
-    }
     encoded[size] = '\0';
-    fclose(tmp);
-    argv[argc - 1] = encoded;
+    argv[argc - 1] = (char *) encoded;
 }
 
 int
@@ -1185,6 +1178,12 @@ notifyRejected(void)
  * keystroke typed by hand. */
 #define REJECT_QUIET_MILLIS 50.0
 
+/* PATCH(fork, title): VS Code re-reads the tab title every 200 ms, output
+ * or not, so the inner foreground program is checked at the same pace
+ * (e.g. a silent `sleep` shows up), but not more often: under heavy output
+ * the I/O loop runs for every read. */
+#define TITLE_POLL_MILLIS 200.0
+
 static double
 monotonicMillis(void)
 {
@@ -1200,6 +1199,7 @@ parent(int sfd, int pty)
     int i;
     int rc;
     double reject_until = 0.0;
+    double title_due = 0.0;
 
     if (pipe_option) {
 	read_waitpipe(c2p_waitpipe);
@@ -1216,12 +1216,17 @@ parent(int sfd, int pty)
     }
 
     for (;;) {
-	/* PATCH(fork, title): VS Code re-reads the tab title every 200 ms,
-	 * output or not, so keep up with the inner foreground program at
-	 * the same pace (e.g. a silent `sleep`). */
-	rc = waitForInput(sfd, pty, inputPending(),
-			  title_suffix != NULL ? 200 : -1);
-	updateTitle(pty);
+	int timeout = -1;
+
+	if (title_suffix != NULL) {
+	    double now = monotonicMillis();
+	    if (now >= title_due) {
+		updateTitle(pty);
+		title_due = now + TITLE_POLL_MILLIS;
+	    }
+	    timeout = (int) (title_due - now) + 1;
+	}
+	rc = waitForInput(sfd, pty, inputPending(), timeout);
 
 	if (sigwinch_queued) {
 	    sigwinch_queued = 0;
@@ -1260,11 +1265,12 @@ parent(int sfd, int pty)
 		     * than the one pasted. */
 		    double now = monotonicMillis();
 		    int discard = now < reject_until;
-		    if (copyIn(inputState, pty, buf, i, discard) && !discard) {
+		    int rejected = copyIn(inputState, buf, i, discard);
+		    if (rejected && !discard) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
-		    if (discard || input_unencodable)
+		    if (discard || rejected)
 			reject_until = now + REJECT_QUIET_MILLIS;
 		    if (flushInput(pty, 0) < 0)
 			break;
@@ -1274,11 +1280,10 @@ parent(int sfd, int pty)
     }
 
     /* PATCH(fork, drain on exit): waits until whatever reads the outer
-     * terminal (VS Code) has taken the last output before exiting. On
-     * macOS, the restoreTermios() below used to do that wait, but the
-     * shell's SIGCHLD interrupted it (EINTR), luit exited, and output
-     * still unread was discarded: a command that printed and exited at
-     * once showed nothing when VS Code read late. */
+     * terminal (VS Code) has taken the last output; output still unread
+     * when luit exits is discarded. restoreTermios() below waits too, but
+     * on macOS the shell's SIGCHLD interrupts that wait (EINTR), so a
+     * command that printed and exited at once could show nothing. */
     while (tcdrain(sfd) < 0 && errno == EINTR) {
 	continue;
     }
@@ -1320,20 +1325,19 @@ childExitCode(int pid)
  * PATCH(fork, inverted tree): runs the shell as the process that started
  * luit, with the converter as a detached helper, instead of luit being the
  * shell's parent. VS Code (like any terminal) looks at the process it
- * started and its children: with luit in between, the shell itself counted
- * as a running child (so closing an editor terminal always asked for
- * confirmation), and the exit code and working directory were luit's. Now
- * they're the shell's, exactly as in a regular terminal.
+ * started and its children: with luit in between, the shell itself would
+ * count as a running child (so closing an editor terminal would always ask
+ * for confirmation), and the exit code and working directory would be
+ * luit's. This way they're the shell's, as in a regular terminal.
  *
  * Only for a session leader with the outer terminal as its controlling
  * terminal (how VS Code, and terminals in general, start a shell);
  * otherwise condom() keeps the classic layout. The steps:
- *   1. Fork the converter and detach it (double fork, so it's no child of
- *      the shell); it calls setsid() to leave our process group.
- *   2. We give up the outer terminal (TIOCNOTTY; ignoring the SIGHUP this
- *      sends our own group) and tell the converter, which takes it as its
- *      controlling terminal: it then gets SIGWINCH on resize and SIGHUP
- *      when the terminal closes, as luit always did.
+ *   1. We give up the outer terminal (releaseOuterTerminal()).
+ *   2. We fork the converter and detach it (double fork, so it's no child
+ *      of the shell). It takes the outer terminal as its controlling
+ *      terminal, so it gets SIGWINCH on resize and SIGHUP when the
+ *      terminal closes, as the classic layout's luit does.
  *   3. We take the inner pty as controlling terminal and exec the shell.
  * The converter exits when the inner pty closes, i.e. when the shell and
  * everything it started are gone.
@@ -1392,8 +1396,8 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	 * shell takes the inner pty with its group as the foreground one,
 	 * and when it exits (a session leader), that group gets SIGHUP. A
 	 * converter still in it then (it can run late, on a busy machine)
-	 * died before reading anything, so a command that printed and
-	 * exited at once showed nothing. */
+	 * would die before reading anything, so a command that printed and
+	 * exited at once would show nothing. */
 	(void) setsid();
 	converter = fork();
 	if (converter != 0)

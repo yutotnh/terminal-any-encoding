@@ -69,7 +69,11 @@ function fallbackShell(input: ShellProfileInput): ResolvedShell {
       if (!profile || typeof profile !== "object") continue;
       const rawPath = (profile as ProfileObject).path;
       const first =
-        typeof rawPath === "string" ? rawPath : asStringArray(rawPath)?.[0];
+        typeof rawPath === "string"
+          ? rawPath
+          : isStringArray(rawPath)
+            ? rawPath[0]
+            : undefined;
       if (first && path.basename(first) === name) {
         return {
           ...fromProfile(profile as ProfileObject, input),
@@ -83,10 +87,8 @@ function fallbackShell(input: ShellProfileInput): ResolvedShell {
   return { path: executable, args: login ? ["--login"] : [], env: {} };
 }
 
-function asStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) && value.every((v) => typeof v === "string")
-    ? value
-    : undefined;
+export function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
 }
 
 export function resolveShell(input: ShellProfileInput): ResolvedShell {
@@ -99,7 +101,11 @@ export function resolveShell(input: ShellProfileInput): ResolvedShell {
   // a profile it can't use.
   const { path: rawPath } = profile as ProfileObject;
   const candidates =
-    typeof rawPath === "string" ? [rawPath] : asStringArray(rawPath);
+    typeof rawPath === "string"
+      ? [rawPath]
+      : isStringArray(rawPath)
+        ? rawPath
+        : undefined;
   if (!candidates) return fallbackShell(input);
   const executable = candidates
     .map((p) => resolveVariables(p, input.env, input.homeDir))
@@ -115,7 +121,7 @@ function fromProfile(
   input: ShellProfileInput,
 ): Omit<ResolvedShell, "path"> {
   const { args: rawArgs, env: rawEnv } = profile;
-  const args = (asStringArray(rawArgs) ?? []).map((a) =>
+  const args = (isStringArray(rawArgs) ? rawArgs : []).map((a) =>
     resolveVariables(a, input.env, input.homeDir),
   );
   const env: Record<string, string | null> = {};

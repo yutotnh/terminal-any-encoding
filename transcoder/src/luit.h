@@ -51,16 +51,6 @@ THE SOFTWARE.
 extern const char *locale_alias;
 extern int fill_fontenc;
 
-/* PATCH(fork, fallback): program output that can't be decoded becomes U+FFFD
- * (stock mis-converted it via an identity fallback). Keyboard input that
- * can't be encoded is rejected as a whole instead (see copyIn in
- * iso2022.c). See docs/transcoder-design.md for details. */
-/* PATCH(fork, input rejection): set while converting a chunk of input when
- * a character in it can't be encoded (also by the OTHER charsets' reverse
- * functions in other_ja.c) */
-extern int input_unencodable;
-/* the first character that couldn't be encoded in that chunk (Unicode) */
-extern unsigned input_unencodable_char;
 extern int ignore_locale;
 extern int iso2022;
 extern int sevenbit;

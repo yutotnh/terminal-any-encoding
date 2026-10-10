@@ -12,14 +12,15 @@
  *   - Two terminal profiles for the dropdown's "+": "Select Encoding..."
  *     (QuickPick) and "Default Encoding" (same as the command above, and the
  *     one to point `terminal.integrated.defaultProfile.*` at)
+ *   - The `terminalAnyEncoding` task type for tasks.json
  *
- * Validating encoding names (never open a terminal for an unknown one; raise
- * an error instead), locating the transcoder (guide the user if it isn't
- * installed), and deciding the locale and shell are all factored out into
- * encodings.ts/locale.ts/transcoder.ts/shellProfile.ts, so this file just
- * calls into them and wires things together.
+ * This file holds what depends on the vscode API: reading settings,
+ * messages and their localization, and building the terminals and tasks.
+ * The decisions themselves (which encodings exist, the locale, the shell,
+ * where the transcoder is) are in encodings.ts, locale.ts, shellProfile.ts
+ * and transcoder.ts, which don't depend on vscode and are unit-tested.
  */
-import * as fs from "fs";
+import * as crypto from "crypto";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -40,6 +41,7 @@ import {
 import { listAvailableLocales } from "./localeProbe";
 import {
   installTranscoderCopy,
+  isExecutableFile,
   pruneTranscoderCopies,
   resolveTranscoder,
   shellShim,
@@ -52,6 +54,7 @@ import {
 import {
   ProfilePlatform,
   ResolvedShell,
+  isStringArray,
   resolveShell,
   shellCommandFlag,
 } from "./shellProfile";
@@ -59,6 +62,15 @@ import {
 const EXTENSION_ID = "terminalAnyEncoding";
 // The task type in tasks.json (see EncodingTaskProvider)
 const TASK_TYPE = EXTENSION_ID;
+// The environment variable the transcoder takes its options from (see
+// luit's expandArgsFromEnv)
+const TRANSCODER_ARGS_ENV = "TERMINAL_ANY_ENCODING_ARGS";
+// Tells apart the terminals opened from profiles (see showWhenOpened); the
+// transcoder removes it, so the shell doesn't inherit it
+const LAUNCH_ID_ENV = "TERMINAL_ANY_ENCODING_LAUNCH_ID";
+// How long showWhenOpened waits for a terminal that may never be created
+// (e.g. a failed launch)
+const SHOW_WHEN_OPENED_TIMEOUT_MS = 30000;
 
 // Encodings used to open terminals, most recent first (the picker lists
 // them first). Kept here and only written to globalState (read once, in
@@ -85,15 +97,11 @@ const COPY_MAX_UNUSED_MS = 90 * 24 * 60 * 60 * 1000;
 // RejectionListener), set up in activate(); without it, terminals just ring
 // the bell.
 let rejectionNotifyDir: string | undefined;
+// At most one rejected-input notification per encoding in this long
+const REJECTION_NOTICE_INTERVAL_MS = 5000;
 const lastRejectionNotice = new Map<string, number>();
 const rejectionEmitter = new vscode.EventEmitter<EncodingDefinition>();
 
-/**
- * Builds user-facing messages. encodings.ts/transcoder.ts are
- * vscode-independent (for testability), so they only return structured
- * data; actually composing the message text and localizing it
- * (vscode.l10n.t()) is centralized in this vscode-dependent layer.
- */
 function formatUnknownEncodingMessage(reason: UnknownEncodingReason): string {
   return vscode.l10n.t(
     'Unknown encoding: "{0}". Run "Open Terminal with Encoding..." to see the supported encodings.',
@@ -120,14 +128,7 @@ function executableExists(executable: string): boolean {
         .split(path.delimiter)
         .filter(Boolean)
         .map((dir) => path.join(dir, executable));
-  return candidates.some((candidate) => {
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return fs.statSync(candidate).isFile();
-    } catch {
-      return false;
-    }
-  });
+  return candidates.some(isExecutableFile);
 }
 
 /**
@@ -203,12 +204,10 @@ function buildTranscodedShell(
   const shell = resolveInnerShell();
 
   const resolution = resolveTranscoder(extensionPath);
-  if (!resolution.ok || !resolution.location) {
+  if (!resolution.ok) {
     return {
       ok: false,
-      message: formatMissingTranscoderMessage(
-        resolution.missingPath ?? extensionPath,
-      ),
+      message: formatMissingTranscoderMessage(resolution.missingPath),
     };
   }
 
@@ -220,7 +219,7 @@ function buildTranscodedShell(
   );
 
   // The transcoder's own options, then the shell and the leading part of
-  // its command line, one per line (see luit's expandArgsFromEnv). LANG is
+  // its command line, one per line (see TRANSCODER_ARGS_ENV). LANG is
   // applied by `env` inside the transcoder, i.e. only to the shell, rather
   // than through TerminalOptions.env: VS Code core rewrites LANG of the
   // process it launches (terminal.integrated.detectLocale, which ignores
@@ -245,10 +244,11 @@ function buildTranscodedShell(
   // integration itself, exactly as for a regular terminal of that profile:
   // it passes the profile's arguments through or replaces them with its
   // injection, and the transcoder hands them to the shell (see shellShim).
-  const transcoderPath = transcoderCopyPath ?? resolution.location.path;
+  // The link lives next to the copy; without one, the bundled transcoder is
+  // launched directly.
   const executable = transcoderCopyPath
-    ? (shellShim(transcoderCopyPath, shell.path) ?? transcoderPath)
-    : transcoderPath;
+    ? (shellShim(transcoderCopyPath, shell.path) ?? transcoderCopyPath)
+    : resolution.path;
 
   return {
     ok: true,
@@ -257,7 +257,7 @@ function buildTranscodedShell(
       shell,
       env: {
         ...shell.env,
-        TERMINAL_ANY_ENCODING_ARGS: transcoderArgs.join("\n"),
+        [TRANSCODER_ARGS_ENV]: transcoderArgs.join("\n"),
       },
       locale,
     },
@@ -315,9 +315,6 @@ interface EncodingTaskDefinition extends vscode.TaskDefinition {
   readonly args?: unknown;
   readonly options?: { readonly cwd?: unknown; readonly env?: unknown };
 }
-
-const isStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every((v) => typeof v === "string");
 
 /**
  * The execution for an encoding task: the same shell as a terminal, started
@@ -462,8 +459,8 @@ async function maybeWarnAboutLocale(
   let message: string;
   if (locale.kind === "noMatch") {
     // Only when there's a locale to suggest: glibc has none at all for
-    // CP932 or the DOS code pages, and a warning the user can't act on
-    // would just repeat itself (README explains).
+    // some encodings (see suggestLocaleName), and a warning the user can't
+    // act on would just repeat itself (README explains).
     const suggestion = suggestLocaleName(encoding.luitEncoding);
     if (!suggestion) return;
     key = `${encoding.id}:noMatch`;
@@ -647,8 +644,12 @@ class EncodingTerminalProfileProvider
       cancelProfileRequest(token);
       return undefined;
     }
-    showWhenOpened(options);
-    return new vscode.TerminalProfile(options);
+    const launchId = crypto.randomUUID();
+    showWhenOpened(launchId);
+    return new vscode.TerminalProfile({
+      ...options,
+      env: { ...options.env, [LAUNCH_ID_ENV]: launchId },
+    });
   }
 }
 
@@ -659,18 +660,18 @@ class EncodingTerminalProfileProvider
  * terminal to be created; over a remote connection (e.g. WSL) it isn't in
  * the list yet, so the previously active terminal stays active. Showing it
  * once it has opened comes after that, since the open event is sent only
- * after the terminal exists.
+ * after the terminal exists. The terminal is recognized by launchId, which
+ * its options carry in LAUNCH_ID_ENV, so another terminal of the same
+ * encoding opening meanwhile isn't taken for it.
  */
-function showWhenOpened(options: vscode.TerminalOptions): void {
-  const args = options.env?.TERMINAL_ANY_ENCODING_ARGS;
+function showWhenOpened(launchId: string): void {
   const subscription = vscode.window.onDidOpenTerminal((terminal) => {
     const opened = terminal.creationOptions as vscode.TerminalOptions;
-    if (opened.env?.TERMINAL_ANY_ENCODING_ARGS !== args) return;
+    if (opened.env?.[LAUNCH_ID_ENV] !== launchId) return;
     stop();
     terminal.show();
   });
-  // In case VS Code never creates it (e.g. a failed launch)
-  const timer = setTimeout(stop, 30000);
+  const timer = setTimeout(stop, SHOW_WHEN_OPENED_TIMEOUT_MS);
   function stop(): void {
     clearTimeout(timer);
     subscription.dispose();
@@ -680,9 +681,9 @@ function showWhenOpened(options: vscode.TerminalOptions): void {
 /**
  * The transcoder rejected input that the encoding can't represent (nothing
  * reached the shell). Every window hears about every rejection, so only the
- * one owning that terminal speaks up, at most every few seconds per
- * encoding, so a burst of rejected keystrokes doesn't stack up
- * notifications.
+ * one owning that terminal speaks up, and at most once per
+ * REJECTION_NOTICE_INTERVAL_MS per encoding, so a burst of rejected
+ * keystrokes doesn't stack up notifications.
  */
 async function handleRejectedInput(report: RejectionReport): Promise<void> {
   const encoding = ENCODINGS.find(
@@ -695,7 +696,8 @@ async function handleRejectedInput(report: RejectionReport): Promise<void> {
   if (!ownProcessIds.includes(report.pid)) return;
   rejectionEmitter.fire(encoding);
   const now = Date.now();
-  if (now - (lastRejectionNotice.get(encoding.id) ?? 0) < 5000) return;
+  const sinceLast = now - (lastRejectionNotice.get(encoding.id) ?? 0);
+  if (sinceLast < REJECTION_NOTICE_INTERVAL_MS) return;
   lastRejectionNotice.set(encoding.id, now);
   void vscode.window.showWarningMessage(
     report.character
@@ -713,10 +715,10 @@ async function handleRejectedInput(report: RejectionReport): Promise<void> {
 
 /**
  * Test-only surface (used from src/test/suite/*.integration.test.ts via
- * `getExtension(...).exports`). Not a real user-facing API. Exposing
- * buildTerminalOptions directly lets integration tests verify
- * the exact logic extension.ts actually uses, without simulating QuickPick
- * interaction through a command.
+ * `getExtension(...).exports`), not an API for other extensions. It lets
+ * the integration tests check what the commands, profiles and tasks build
+ * without going through a QuickPick, and reset or observe the state they
+ * leave behind.
  */
 export interface TestExports {
   buildTerminalOptions: typeof buildTerminalOptions;
@@ -736,9 +738,9 @@ export async function activate(
     [],
   );
   const bundled = resolveTranscoder(extensionPath);
-  if (bundled.ok && bundled.location) {
+  if (bundled.ok) {
     transcoderCopyPath = installTranscoderCopy(
-      bundled.location.path,
+      bundled.path,
       context.globalStorageUri.fsPath,
     );
     pruneTranscoderCopies(

@@ -4,8 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import {
   validateEncodingId,
-  isKnownEncoding,
-  listEncodingIds,
+  getEncoding,
   ENCODINGS,
   encodingShortName,
   groupForPicker,
@@ -72,39 +71,19 @@ test("unknown encodings are rejected with a reason", () => {
 });
 
 test("case differences and spelling variants are rejected as distinct (no lenient matching)", () => {
-  assert.strictEqual(isKnownEncoding("EUCJP"), false);
-  assert.strictEqual(isKnownEncoding("ShiftJIS"), false);
+  assert.strictEqual(getEncoding("EUCJP"), undefined);
+  assert.strictEqual(getEncoding("ShiftJIS"), undefined);
 });
 
 test("UTF-8 isn't offered: it would just open the same terminal as `+`", () => {
-  assert.strictEqual(listEncodingIds().includes("utf8"), false);
-});
-
-test("Chinese, Korean, and single-byte encodings are included", () => {
-  for (const id of [
-    "gb18030",
-    "gbk",
-    "cp950",
-    "euckr",
-    "iso88591",
-    "koi8r",
-    "cp852",
-  ]) {
-    assert.ok(isKnownEncoding(id), `${id} not found`);
-  }
-});
-
-test("KOI8-T is offered", () => {
-  assert.ok(isKnownEncoding("koi8t"));
+  assert.strictEqual(getEncoding("utf8"), undefined);
 });
 
 test("ENCODINGS order follows VS Code core's files.encoding (SUPPORTED_ENCODINGS.order)", () => {
-  // This is vs/workbench/services/textfile/common/encoding.ts's
-  // SUPPORTED_ENCODINGS sorted by ascending order, with the 4 entries this
-  // extension doesn't offer (utf8/utf8bom/utf16le/utf16be) removed. To
-  // make this look the same order as the files.encoding dropdown, ENCODINGS
-  // itself is defined in this order (single source of truth; an existing
-  // sync test checks that the package.json side tracks this order too).
+  // vs/workbench/services/textfile/common/encoding.ts's SUPPORTED_ENCODINGS
+  // sorted by `order`, without utf8/utf8bom/utf16le/utf16be: the order of
+  // the files.encoding dropdown. The package.json tests below check that
+  // package.json follows ENCODINGS.
   const vscodeOrder = [
     "windows1252",
     "iso88591",

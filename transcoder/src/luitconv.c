@@ -639,12 +639,9 @@ initialize16bitTable(const char *charset, LuitConv ** datap, unsigned gmax)
     }
 }
 
-/* PATCH(fork, fallback): like luitReverse(), a pure reverse lookup with no
- * fallback, for callers that want to avoid the identity fallback on an
- * indistinguishable "not found" case. The reverse-direction counterpart of
- * luitMapCodeValueFound(). Used by ISO2022 G1-G3
- * (FontencCharsetReverse in charset.c) and CP932 (reverse_cp932 in
- * other_ja.c).
+/* PATCH(fork, fallback): luitReverse() without its identity fallback:
+ * reports whether the table has a code for the character. The reverse
+ * counterpart of luitMapCodeValueFound().
  */
 int
 luitReverseFound(unsigned code, FontMapReversePtr rev, unsigned *out)
@@ -778,12 +775,12 @@ initializeBuiltInTable(LuitConv * data,
     for (n = 0; n < builtIn->length; ++n) {
 	if (builtIn->table[n].source < data->table_size) {
 	    size_t j = builtIn->table[n].source;
-	    /* PATCH(fork): a fork-generated row can carry
+	    /* PATCH(fork, builtin tables): a fork-generated row can carry
 	     * BUILTIN_DECODE_ONLY in its target (luitconv.h): decode it as
 	     * usual, but keep it out of the reverse index, so that encoding a
 	     * code point with several source bytes sends what VS Code saves
-	     * instead of whichever duplicate bsearch() lands on. Upstream tables never
-	     * set this bit (Unicode stops at 0x10FFFF). */
+	     * instead of whichever duplicate bsearch() lands on. Upstream
+	     * tables never set this bit (Unicode stops at 0x10FFFF). */
 	    unsigned target = builtIn->table[n].target;
 	    int decode_only = (target & BUILTIN_DECODE_ONLY) != 0;
 
@@ -1307,36 +1304,39 @@ luitLookupReverse(FontMapPtr fontmap_ptr)
     return result;
 }
 
-/* PATCH(fork, fallback): luitMapCodeValue() is called from many places, including
- * startup-time locale probing, and directly changing its identity-fallback
- * behavior on an indistinguishable "not found" case was confirmed by
- * measurement to break unrelated processing (e.g. ASCII passthrough)
- * (see "Fallback design for conversion failures" in docs/transcoder-design.md).
- *
- * So luitMapCodeValue() itself is left completely stock, and a separate
- * pure reference function that reports "was it found" without any
- * fallback is provided instead, so that only the call sites of charsets
- * added fork-local (jisx0208-2007-0, jisx0212.1990-0, cp932-direct-0) can
- * apply the fallback policy.
+/* PATCH(fork, fallback): luitMapCodeValue() without its identity
+ * fallback: reports whether the table has a character for the code.
+ * luitMapCodeValue() itself stays as upstream has it: it's called from
+ * many places, startup's locale probing included, and some of them rely on
+ * the fallback (ASCII passes through it). Only the fork's charsets call
+ * this instead (see "Fallback design for conversion failures" in
+ * docs/transcoder-design.md).
  */
+/* luitMapCodeValueFound() is called for every character, mostly with the
+ * same table as the last time, so the last table it found is checked first */
+static LuitConv *last_found = NULL;
+
 int
 luitMapCodeValueFound(unsigned code, FontMapPtr fontmap_ptr, unsigned *out)
 {
-    LuitConv *search;
+    LuitConv *search = last_found;
 
-    for (search = all_conversions; search != NULL; search = search->next) {
-	if (&(search->mapping) == fontmap_ptr) {
-	    /* Only codes the table has a row for: initializeBuiltInTable()
-	     * presets ucs = code for the first `length` codes (upstream's
-	     * identity fallback), so ucs alone can't tell. A row's text is
-	     * set. */
-	    if (code < search->table_size
-		&& search->table_utf8[code].text != NULL) {
-		*out = search->table_utf8[code].ucs;
-		return 1;
-	    }
-	    return 0;
+    if (search == NULL || &(search->mapping) != fontmap_ptr) {
+	for (search = all_conversions; search != NULL; search = search->next) {
+	    if (&(search->mapping) == fontmap_ptr)
+		break;
 	}
+	if (search == NULL)
+	    return 0;
+	last_found = search;
+    }
+    /* Only codes the table has a row for: initializeBuiltInTable() presets
+     * ucs = code for the first `length` codes (upstream's identity
+     * fallback), so ucs alone can't tell. A row's text is set. */
+    if (code < search->table_size
+	&& search->table_utf8[code].text != NULL) {
+	*out = search->table_utf8[code].ucs;
+	return 1;
     }
     return 0;
 }
@@ -1611,6 +1611,9 @@ luitDestroyReverse(FontMapReversePtr reverse)
 		    free(p->table_utf8[n].text);
 		}
 	    }
+
+	    if (last_found == p)	/* PATCH(fork, fallback) */
+		last_found = NULL;
 
 	    /* delink and destroy */
 	    if (q != NULL)
