@@ -468,9 +468,6 @@ pasteAfterBound(void)
 static void
 escapesInRejected(void)
 {
-    /* not an ESC right before the snowman: upstream's parser takes the
-     * byte after an ESC as a character of its own (U+00E2 for the
-     * snowman's first), so nothing is rejected there */
     static const char *const parts[] = {
 	"", "pq", "pq\n", "\033[D", "\033b", "\033\033[D",
 	"\033[20x", "\033[2000", "\033[200", "\033[201", "pq\033"
@@ -480,7 +477,7 @@ escapesInRejected(void)
 
     for (bracketed = 0; bracketed <= 1; bracketed++) {
 	for (wrapped = 0; wrapped <= 1; wrapped++) {
-	    for (a = 0; a < count - 1; a++) {
+	    for (a = 0; a < count; a++) {
 		for (b = 0; b < count; b++) {
 		    Read reads[2];
 		    char what[96];
@@ -681,6 +678,37 @@ unrejectedSplits(void)
     }
 }
 
+/*
+ * Input ending in an escape sequence cut after one byte, in a buffer just
+ * as long, so that a read past its end is one past the allocation (the
+ * sanitizers' build reports it)
+ */
+static void
+escapeAtTheEnd(void)
+{
+    static const char *const inputs[] = { "ab\033[", "ab\033x", "\033\033" };
+    int in;
+
+    for (in = 0; in < (int) (sizeof(inputs) / sizeof(inputs[0])); in++) {
+	size_t len = strlen(inputs[in]);
+	unsigned char *exact = malloc(len), out[64];
+
+	if (exact == NULL)
+	    exit(2);
+	memcpy(exact, inputs[in], len);
+	scenarios++;
+	if (copyInText(input_state, exact, (int) len) || takeInput(out) != len
+	    || memcmp(out, inputs[in], len)) {
+	    failures++;
+	    printf("NG an escape at the end of the input passes as it is (input %d)\n", in);
+	}
+	free(exact);
+	/* end what's left open, for the scenarios after */
+	(void) copyInText(input_state, (unsigned char *) "A", 1);
+	(void) takeInput(out);
+    }
+}
+
 /* A key held down after a rejection, 10 ms apart: dropped for the bound,
  * then let through */
 static void
@@ -720,6 +748,7 @@ main(void)
     heldIntoRejected();
     escapeBeforeMarker();
     unrejectedSplits();
+    escapeAtTheEnd();
     heldKey();
     printf("%d of %d scenarios kept every rule\n", scenarios - failures, scenarios);
     return failures ? 1 : 0;

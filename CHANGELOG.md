@@ -29,6 +29,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   shell that uses bracketed paste, the rest of a paste is now dropped up
   to its end (for 2 seconds at most), the shell gets its paste markers
   whole, and input after the paste's end is sent as usual.
+- The first non-ASCII key typed after the Escape key (with Alt, or any
+  time later with nothing in between) was sent as a different character
+  (あ as ã), and one the encoding can't represent was sent mangled instead
+  of being rejected.
 
 ## [0.1.0] - 2026-10-08
 

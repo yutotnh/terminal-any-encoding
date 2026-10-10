@@ -393,6 +393,17 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
   the same kind of bug: it moved on when the charset's reverse function
   found no code (0) and wrote nothing, so the character vanished. It now
   rejects the input.
+- `copyIn()`'s input parser (now `convertUnit()`), in an escape sequence,
+  took a non-ASCII byte as a character of its own: ESC then あ sent ESC and
+  U+00E3 for あ's first byte, dropping the rest, and an unencodable
+  character after an ESC got through mangled instead of being rejected.
+  The Escape key pressed alone leaves the parser in the sequence, so this
+  hit the first non-ASCII key typed after it, however much later, as well
+  as Alt with one. A non-ASCII byte now ends the
+  sequence and is converted as the start of a character. After an ESC it
+  also compared the byte after the one it took with `[`, reading one past
+  the input when the ESC's next byte was its last; it now looks at the
+  byte taken.
 - Even after that fix, the T_128 charset (CP852 etc., `shift`=0x80) still had
   the same symptom (silent disappearance) via a different code path: because
   some source bytes map, after applying shift, into the control range
