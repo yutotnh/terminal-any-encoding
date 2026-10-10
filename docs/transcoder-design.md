@@ -128,17 +128,78 @@ character the encoding can't represent is rejected as a whole, and the user
 gets a bell. Substituting `?` or dropping just that character would change the
 command the shell runs (`rm <emoji>*` becomes `rm ?*` / `rm *`). `copyIn()`
 converts each read into a buffer and only writes it if every character
-converted. A paste can arrive in several reads, so input is also dropped until
-it pauses for 50 ms after a rejection (forwarding only the tail of a paste
-could run a different command), and if a bracketed paste (`ESC [200~`) was
-already forwarded, its end marker is still passed through so the shell doesn't
-stay in paste mode. Both have gaps: the rest of a paste arriving after the
-pause gets through, and markers are only recognized whole within one read.
-Dropping up to the end marker instead would have to be bounded, as luit
-can't know that one will come (the terminal may not send markers at all,
-e.g. with `terminal.integrated.ignoreBracketedPasteMode`). Warning on stderr
-instead isn't an option either: the messages would be mixed into the
-terminal output.
+converted. Warning on stderr instead isn't an option either: the messages
+would be mixed into the terminal output.
+
+A paste can arrive in several reads, and forwarding only its tail could run
+a different command, so what follows a rejection is dropped too:
+
+- Inside a bracketed paste (`ESC [200~` ... `ESC [201~`), up to its end
+  marker, however late the rest arrives.
+- Otherwise until input pauses for 50 ms.
+- Either way for at most 2 s from the rejection, not extended by the input
+  it drops. luit can't know that an end marker will come (VS Code's
+  `terminal.integrated.ignoreBracketedPasteMode`, a terminal reset, a lost
+  connection), so without the bound a wrong guess would drop every later
+  keystroke. A rest arriving later gets through: luit can't tell it from
+  typing. Locally that doesn't happen: VS Code writes a paste to the pty at
+  once (on Linux, 300 KB arrived within 3 ms), and luit reads what it drops
+  without waiting for the shell. The clock stops while luit waits for a
+  busy program to take what it converted before, so a rest waiting behind
+  that isn't late.
+
+Dropping up to the end marker needs bracketed paste on, which luit follows
+in the program's output (`ESC [?2004h`, also combined as in
+`ESC [?1049;2004h`, and `ESC [?2004l` or a reset, `ESC c`, to turn it off).
+
+The paste markers in input aren't passed on as they come. luit holds what
+may be one (`ESC [ 2 0 0`, so far) until it is one or isn't, and then
+passes on a whole marker by these rules, which `tests/paste_driver.c`
+checks for every way a rejected paste can be split into reads (cut in
+either marker, before the rejected character, with gaps around the pause
+and the bound), for rejected reads with other escapes in them, and for
+every way input with nothing rejected can be cut into two or three reads,
+with the time faked:
+
+- The shell never gets part of a marker: it gets a start marker unless it's
+  dropped, and an end marker unless the paste's start was (the end of a
+  paste whose start went through as text, cut for 10 ms after its ESC or for
+  2 s later, goes through too: the shell may have taken that start for one).
+  So a start marker goes through even when what follows it is rejected, and
+  the shell gets an empty paste.
+- With nothing rejected, the shell gets the same bytes however the input
+  is cut into reads and however long between them: those of the whole
+  input converted at once, as a task's command line is.
+- A shell in a paste gets its end marker exactly once, when it comes,
+  dropped or not.
+- What comes after the drop goes through, including the rest of a paste
+  after the bound.
+- A read is handled in parts between markers, so input after a paste's end
+  in the same read is converted on its own: a character there that can't
+  be encoded is rejected by itself (the notification still names the first
+  one). A part is rejected as a whole, other escapes in it (keys such as
+  `ESC [D`) included, and so is what's held at the end of a rejected read
+  if it doesn't turn out to be a marker. Input after a marker is converted
+  as if the marker had gone through the converter, which ends an escape
+  left open before it (an Escape key right before a paste).
+
+A lone ESC is what the Escape key sends, so one held at the end of a read
+goes on as a key after 10 ms if nothing follows; more of a marker (`ESC [`
+...) is held for 2 s at most, as no key sends it alone. Inside a paste
+what's held waits for what comes next (in a paste the shell didn't get the
+start of, for 2 s at most): it's most likely the start of the end marker,
+which the terminal always sends, and passing it on as text would leave the
+shell in the paste. An ESC that nothing follows for 10 ms outside a paste is
+taken for a key, so a start marker split right after its ESC by that long
+isn't one: luit can't tell the two apart. If the rest of that paste is then
+rejected, the shell gets the ESC and the end marker only. A start marker
+split for longer than 2 s goes through as text too, and the shell may take
+it with what comes later for one; if the rest of that paste is rejected, its
+end marker is dropped with it, and the shell can stay in the paste. Locally
+neither happens, as VS Code writes a paste to the pty at once. A task's
+command line (`-encode-last-arg`) isn't keyboard input: it's converted
+without any of this, its escapes and markers passed on as they are, and
+leaves the paste state alone.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a

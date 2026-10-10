@@ -836,7 +836,7 @@ expandArgsFromEnv(int *argcp, char ***argvp)
 /*
  * PATCH(fork, task command line): with -encode-last-arg, converts the last
  * argument -- the command line of a VS Code task, which VS Code passes in
- * UTF-8 -- into the encoding the way typed input is converted (copyIn(),
+ * UTF-8 -- into the encoding the way typed input is converted (copyInText(),
  * on the input state nothing has been typed into yet), so the shell gets
  * what it would have if the line had been typed in this terminal. Earlier
  * arguments (the profile's, VS Code's shell-integration script paths) name
@@ -863,7 +863,7 @@ encodeLastArg(int argc, char **argv)
     }
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	if (copyIn(inputState, arg + done, (int) n, 0)) {
+	if (copyInText(inputState, arg + done, (int) n)) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
@@ -1202,12 +1202,6 @@ notifyRejected(void)
     closedir(dir);
 }
 
-/* PATCH(fork, input rejection): how long input keeps being dropped after a
- * rejection, measured from the last dropped read. Long enough to cover a
- * paste arriving in several reads, short enough not to eat the next
- * keystroke typed by hand. */
-#define REJECT_QUIET_MILLIS 50.0
-
 /* PATCH(fork, title): VS Code re-reads the tab title every 200 ms, output
  * or not, so the inner foreground program is checked at the same pace
  * (e.g. a silent `sleep` shows up), but not more often: under heavy output
@@ -1228,8 +1222,12 @@ parent(int sfd, int pty)
     unsigned char buf[BUFFER_SIZE];
     int i;
     int rc;
-    double reject_until = 0.0;
     double title_due = 0.0;
+    /* PATCH(fork, input rejection): the time input waited for the pty to
+     * take what was converted before, which copyIn()'s clock leaves out:
+     * the rest of a paste waiting for a busy program isn't late */
+    double blocked = 0.0;
+    double blocked_since = -1.0;
 
     if (pipe_option) {
 	read_waitpipe(c2p_waitpipe);
@@ -1256,6 +1254,8 @@ parent(int sfd, int pty)
 	    }
 	    timeout = (int) (title_due - now) + 1;
 	}
+	if (inputHeld() && (timeout < 0 || timeout > (int) HOLD_MILLIS + 1))
+	    timeout = (int) HOLD_MILLIS + 1;	/* see flushHeldInput() */
 	rc = waitForInput(sfd, pty, inputPending(), timeout);
 
 	if (sigwinch_queued) {
@@ -1282,31 +1282,38 @@ parent(int sfd, int pty)
 	     * flushInput() in iso2022.c). */
 	    if ((rc & IO_PtyWritable) && flushInput(pty, 0) < 0)
 		break;
+	    {
+		double now = monotonicMillis();
+		if (inputPending()) {
+		    if (blocked_since < 0.0)
+			blocked_since = now;
+		} else if (blocked_since >= 0.0) {
+		    blocked += now - blocked_since;
+		    blocked_since = -1.0;
+		}
+	    }
 	    if ((rc & IO_CanRead) && !inputPending()) {
 		i = (int) read(sfd, buf, (size_t) BUFFER_SIZE);
 		if ((i == 0) || ((i < 0) && (errno != EAGAIN)))
 		    break;
 		if (i > 0) {
 		    /* PATCH(fork, input rejection): input with an unencodable
-		     * character is rejected as a whole (see copyIn) and the
-		     * user gets a bell. Input arriving right after that is
-		     * dropped too: a paste comes in several reads, and
-		     * forwarding only its tail could run a different command
-		     * than the one pasted. */
-		    double now = monotonicMillis();
-		    int discard = now < reject_until;
-		    int rejected = copyIn(inputState, buf, i, discard);
-		    if (rejected && !discard) {
+		     * character is rejected as a whole, and the rest of a
+		     * paste after it dropped (see copyIn); the user gets a
+		     * bell for the rejection */
+		    if (copyIn(inputState, buf, i, monotonicMillis() - blocked)) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
-		    if (discard || rejected)
-			reject_until = now + REJECT_QUIET_MILLIS;
 		    if (flushInput(pty, 0) < 0)
 			break;
 		}
 	    }
 	}
+	if (!inputPending()
+	    && flushHeldInput(inputState, monotonicMillis() - blocked)
+	    && flushInput(pty, 0) < 0)
+	    break;
     }
 
     /* PATCH(fork, drain on exit): waits until whatever reads the outer

@@ -24,6 +24,7 @@ import termios
 import tty
 from pathlib import Path
 import time
+import typing
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LUIT = REPO_ROOT / "transcoder" / "src" / "luit"
@@ -91,21 +92,64 @@ FALLBACK_INPUT_CASES = [
     ("GBK", "A☃B", None, "\a", "OTHER charset path (other_fork.c) rejects too"),
 ]
 
-# Input arriving in several reads after a rejection (a paste) is dropped
-# until input pauses, so only the paste's tail can never reach the shell;
-# the next input after the pause goes through. An open bracketed paste is
-# still closed. (encoding, [(delay before write, text)], expected, description)
+# Input arriving after a rejection (the rest of a paste) is dropped too:
+# inside a bracketed paste up to its end marker, otherwise until input
+# pauses for 50 ms, and either way for at most 2 s. Every way a paste can
+# be split into reads is checked by tests/paste_driver.c (run_paste_driver),
+# with the time faked; these run luit itself, for what that can't see: the
+# bell, the real clock, the program's output turning bracketed paste on and
+# off, and an Escape key held back for 10 ms at most. Paste markers are
+# passed on by luit whole, so a start marker reaches the shell even when
+# what follows it is rejected; the shell then gets an empty paste.
+# (encoding, [(delay before write, text)], child output, expected,
+# description; the inner tty echoes ESC as ^[)
+BP_ON = "\x1b[?2004h"
+
+
+def _escapes_then_i(got: str) -> bool:
+    """The Escape key held after the bound goes through, then the i"""
+    return got.startswith("\a") and got.endswith("i") and got.count("^[") >= 5
+
+
 INPUT_REJECTION_SEQUENCE_CASES = [
-    ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], "\a", "the rest of a split paste is dropped too"),
-    ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], "\aok", "input after a pause goes through again"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste (the inner tty echoes ESC as ^[)"),
-    # Whether an end marker will come can't be known (the terminal may not
-    # send markers at all), so a start marker must never hold input back
-    # for longer than the pause
-    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], "\aok", "a start marker without an end marker doesn't hold input back"),
-    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")],
-     "^[[200~\aok", "a start marker typed key by key doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], None, "\a", "the rest of a split paste is dropped too"),
+    ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], None, "\aok", "input after a pause goes through again"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], None, "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, "ok")], BP_ON, "\a^[[200~^[[201~ok",
+     "the rest of a bracketed paste is dropped up to its end marker, however late"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x"), (2.3, "ok")], BP_ON, "\a^[[200~ok", "no end marker: input is held back for 2 s at most"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\x1b[?1049;2004h", "\a^[[200~^[[201~ok",
+     "bracketed paste turned on in a combined sequence"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\a^[[200~ok", "a terminal reset turns bracketed paste off"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON, "\a^[[200~", "with bracketed paste on, input is held back up to the end marker"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")], BP_ON,
+     "^[[200~\aok", "a start marker typed key by key isn't one (the Escape key goes on after 10 ms)"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "x")], None, "^[x", "an Escape key alone goes through"),
+    ("euc-jp-2007", [(0.0, "echo A\n\x1b[D☃"), (0.3, "x")], None, "\ax", "a read with a key's escape in it is still rejected as a whole"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "\x1b[200~あいう\x1b[201~"), (0.3, "ok")], BP_ON, "^[^[[200~あいう^[[201~ok",
+     "a paste right after an Escape key arrives as it is"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "[200~abc\x1b[201~"), (0.3, "ok")], BP_ON, "^[[200~abc^[[201~ok",
+     "a paste whose start marker is cut after its ESC still gets its end marker"),
+    ("euc-jp-2007", [(0.0, "\x1b[20"), (2.3, "0~abc\x1b[201~"), (0.3, "ok")], BP_ON, "^[[200~abc^[[201~ok",
+     "a start marker cut for longer than 2 s goes through as text, its end too"),
+    ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
 ]
+
+# Rejecting depends on the encoding (OTHER charsets, single-byte tables),
+# and a read is converted in parts: the main cases again in other
+# encodings, with a character of each after the paste's end. (GB18030 can
+# encode every character, so it rejects nothing.)
+for _enc, _ch in (("CP932", "あ"), ("GBK", "中"), ("CP1252", "é"), ("eucKR", "한")):
+    INPUT_REJECTION_SEQUENCE_CASES += [
+        (_enc, [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, _ch + "ok")], BP_ON, "\a^[[200~^[[201~" + _ch + "ok",
+         "the rest of a bracketed paste is dropped up to its end marker"),
+        (_enc, [(0.0, "\x1b[200~rm ☃\x1b[201~" + _ch + "ok")], BP_ON, "\a^[[200~^[[201~" + _ch + "ok",
+         "input after the end marker in the rejected read itself goes through"),
+        (_enc, [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (0.3, "1~"), (0.3, "ok")], None, "^[[200~X\a^[[201~ok",
+         "an end marker cut by the pause still closes the paste"),
+        (_enc, [(0.0, "\x1b[200~" + _ch + " ☃"), (0.3, " x\x1b[201~☃")], BP_ON, "\a^[[200~\a^[[201~",
+         "a character after the end marker that can't be encoded is rejected on its own"),
+    ]
 
 # Chinese, Korean, and single-byte encodings
 # (encoding, input byte sequence (hex), expected code point, description)
@@ -336,25 +380,47 @@ def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect: str
     return True, repr(text)
 
 
-def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None, expect: str) -> tuple[bool, str]:
+def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None,
+                            expect: "str | typing.Callable[[str], bool]",
+                            child_output: str | None = None) -> tuple[bool, str]:
     """Launches luit on a raw-mode PTY and confirms via round trip the byte
     sequence the child (cat) actually received. The head -c approach was
     unstable due to shell startup timing in this environment, so this uses a
     subprocess approach where tty.setraw() fully raw-mode's the outer PTY
     instead (with ICANON left on, input
     got buffered until a newline, and unmapped-character fallback couldn't
-    be verified correctly).
+    be verified correctly). With child_output, the child prints that before
+    it becomes cat, as a shell turns bracketed paste on (it isn't part of
+    what's compared). expect is the text to come back, or a function that
+    judges it.
     """
     master, slave = pty.openpty()
     tty.setraw(master)
     args = [str(LUIT)]
-    args += ["-encoding", enc, "--", "cat"]
+    child = ["cat"]
+    if child_output is not None:
+        child = ["sh", "-c", 'printf "%s" "$0"; exec cat', child_output]
+    args += ["-encoding", enc, "--", *child]
     p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
     os.close(slave)
     time.sleep(0.4)
     steps = text if isinstance(text, list) else [(0.0, text)]
+    # Each write its delay after the one before. sleep() overshoots by tens
+    # of ms on some runners (macOS), more than the 50 ms the drop's pause
+    # is, so delays under that are waited out without it, and longer ones
+    # sleep to 50 ms before. max_gap is the longest time between two writes.
+    last = time.monotonic()
+    max_gap = 0.0
     for delay, chunk in steps:
-        time.sleep(delay)
+        due = last + delay
+        left = due - time.monotonic()
+        if left > 0.05:
+            time.sleep(left - 0.05)
+        while time.monotonic() < due:
+            pass
+        now = time.monotonic()
+        max_gap = max(max_gap, now - last)
+        last = now
         os.write(master, chunk.encode("utf-8"))
     out = b""
     end = time.time() + 1.2
@@ -382,8 +448,13 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
         got = out.decode("utf-8")
     except UnicodeDecodeError:
         return False, f"invalid UTF-8: {out!r}"
+    if child_output is not None:
+        got = got.replace(child_output, "", 1)
+    gap = f"longest gap between writes {max_gap * 1000:.0f} ms"
+    if callable(expect):
+        return expect(got), f"got {got!r}, {gap}"
     if got != expect:
-        return False, f"{got!r} != expected {expect!r}"
+        return False, f"{got!r} != expected {expect!r}, {gap}"
     return True, f"round trip OK ({got!r})"
 
 
@@ -442,10 +513,16 @@ ENCODE_LAST_ARG_CASES = [
     ("euc-jp-2007", "echo plain && exit 4", 4, "plain"),
     # Not representable: nothing runs (no RAN), luit fails and names it
     ("euc-jp-2007", "echo RAN; echo '\U0001F600'", 1, "U+1F600"),
+    # Escapes, paste markers among them, arrive as they are: a command line
+    # isn't a paste
+    ("euc-jp-2007", "printf %s '\x1b[200~a\x1b[201~' | od -An -tx1", 0, "1b 5b 32 30 30 7e 61 1b 5b 32 30 31 7e"),
+    ("euc-jp-2007", "printf %s 'a\x1b[201~' | od -An -tx1", 0, "61 1b 5b 32 30 31 7e"),
+    # (the start of a marker at the very end, which the trap shows)
+    ("euc-jp-2007", "trap 'printf %s \"$x\" | od -An -tx1' EXIT; x=a\x1b[20", 0, "61 1b 5b 32 30"),
 ]
 
 
-def run_notify_case() -> tuple[bool, str]:
+def run_notify_case(text: str = "☃", expect_char: int = 0x2603) -> tuple[bool, str]:
     """-notify DIR: each rejected input is reported as one line,
     "unencodable <encoding> <pid> <hex code point>", to every Unix socket ("*.sock")
     in DIR (one per VS Code window; the window owning the terminal reacts)."""
@@ -464,7 +541,7 @@ def run_notify_case() -> tuple[bool, str]:
         got = []
         try:
             time.sleep(0.4)
-            os.write(fd, "☃".encode("utf-8"))
+            os.write(fd, text.encode("utf-8"))
             for server in servers:
                 conn, _ = server.accept()
                 conn.settimeout(3)
@@ -478,7 +555,7 @@ def run_notify_case() -> tuple[bool, str]:
             os.close(fd)
             for server in servers:
                 server.close()
-    expect = f"unencodable euc-jp-2007 {pid} 2603\n".encode()  # U+2603 ☃
+    expect = f"unencodable euc-jp-2007 {pid} {expect_char:X}\n".encode()
     return got == [expect, expect], f"{got!r}"
 
 
@@ -811,6 +888,70 @@ def run_extension_env_removed_case() -> tuple[bool, str]:
     return "END" in text and not leaked, f"leaked {leaked}" if leaked else "none leaked"
 
 
+def run_encode_last_arg_paste_state_case() -> tuple[bool, str]:
+    """A paste start marker in a task's command line (-encode-last-arg)
+    isn't taken for one the shell got: input rejected afterwards isn't held
+    back up to an end marker that will never come."""
+    master, slave = pty.openpty()
+    tty.setraw(master)
+    command = ": '\x1b[200~'; printf '\\033[?2004h'; exec cat"
+    p = subprocess.Popen([str(LUIT), "-encoding", "euc-jp-2007", "-encode-last-arg", "--", "sh", "-c", command],
+                         stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
+    os.close(slave)
+    time.sleep(0.4)
+    os.write(master, "☃".encode("utf-8"))
+    time.sleep(0.3)
+    os.write(master, b"ok")
+    out = b""
+    end = time.time() + 1.2
+    while time.time() < end:
+        r, _, _ = select.select([master], [], [], 0.3)
+        if not r:
+            continue
+        try:
+            d = os.read(master, 4096)
+        except OSError:
+            break
+        if not d:
+            break
+        out += d
+    os.close(master)
+    p.kill()
+    p.wait(timeout=1)
+    got = out.decode("utf-8", "replace").replace("\x1b[?2004h", "")
+    return got == "\aok", f"got {got!r}"
+
+
+def run_paste_driver() -> tuple[bool, str]:
+    """tests/paste_driver.c, built against transcoder/src's objects (with the
+    flags configure chose, sanitizers included), feeds copyIn() every way a
+    rejected paste, and input with nothing rejected, can be split into
+    reads, with the time faked, and checks what the shell gets."""
+    src = LUIT.parent
+    show = 'print:\n\t@echo "$(CC)|$(CPPFLAGS) $(CFLAGS)|$(LDFLAGS)|$(LIBS)|$(OBJS)"\n'
+    vars_ = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-", "print"], cwd=src,
+                           input=show, capture_output=True, text=True)
+    if vars_.returncode != 0:
+        return False, f"couldn't read the Makefile: {vars_.stderr.strip()}"
+    cc, cflags, ldflags, libs, objs = (v.split() for v in vars_.stdout.strip().split("|"))
+    with tempfile.TemporaryDirectory() as tmp:
+        luit_lib = os.path.join(tmp, "luit_lib.o")
+        driver = os.path.join(tmp, "paste_driver")
+        steps = [
+            [*cc, *cflags, "-Dmain=luit_main", "-c", "luit.c", "-o", luit_lib],
+            [*cc, *cflags, "-o", driver, str(REPO_ROOT / "tests" / "paste_driver.c"),
+             luit_lib, *[o for o in objs if o != "luit.o"], *ldflags, *libs],
+        ]
+        for step in steps:
+            built = subprocess.run(step, cwd=src, capture_output=True, text=True)
+            if built.returncode != 0:
+                return False, f"build failed: {built.stderr.strip()[-400:]}"
+        ran = subprocess.run([driver], capture_output=True, text=True, timeout=120)
+    lines = ran.stdout.strip().splitlines()
+    detail = "\n   ".join(lines[-20:]) if ran.returncode else (lines[-1] if lines else "no output")
+    return ran.returncode == 0, detail
+
+
 def run_classic_tree_case() -> tuple[bool, str]:
     """Without a controlling terminal of its own (not how terminals start
     shells) luit keeps the classic layout, shell as its child, and passes
@@ -1013,9 +1154,9 @@ def main() -> int:
             failures += 1
 
     print("\n== input rejection across reads (real PTY round-trip) ==")
-    for enc, steps, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
+    for enc, steps, child_output, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
         total += 1
-        ok, detail = run_fallback_input_case(enc, steps, None, expect)
+        ok, detail = run_fallback_input_case(enc, steps, None, expect, child_output=child_output)
         mark = "OK " if ok else "NG "
         print(f"{mark}[{enc}] {desc} -> {detail}")
         if not ok:
@@ -1030,10 +1171,24 @@ def main() -> int:
         if not ok:
             failures += 1
 
+    print("\n== every split of a paste (tests/paste_driver.c) ==")
+    total += 1
+    ok, detail = run_paste_driver()
+    print(f"{'OK ' if ok else 'NG '}{detail}")
+    if not ok:
+        failures += 1
+
     print("\n== reporting rejected input (-notify) ==")
     total += 1
     ok, detail = run_notify_case()
     print(f"{'OK ' if ok else 'NG '}rejection reported to every socket -> {detail}")
+    if not ok:
+        failures += 1
+    total += 1
+    # two parts of one read rejected (a paste, then a character after its
+    # end): the paste's character is named
+    ok, detail = run_notify_case("\x1b[200~rm ☃\x1b[201~\U0001F389", 0x2603)
+    print(f"{'OK ' if ok else 'NG '}the first character that couldn't be encoded is named -> {detail}")
     if not ok:
         failures += 1
 
@@ -1050,6 +1205,7 @@ def main() -> int:
             ("tab title follows the foreground program", run_title_case, True),
             ("started by the extension, marks its copy as used", run_mark_copy_used_case, False),
             ("started by the extension, the shell doesn't inherit its variables", run_extension_env_removed_case, False),
+            ("a paste marker in a task's command line isn't taken for typed input", run_encode_last_arg_paste_state_case, False),
             ("classic (no controlling terminal)", run_classic_tree_case, False)]:
         if linux_only and not sys.platform.startswith("linux"):
             print(f"SKIP {name} (Linux only)")

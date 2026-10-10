@@ -433,13 +433,53 @@ fromUtf8(unsigned char *b)
 	return -1;
 }
 
-/* PATCH(fork, input rejection): bracketed paste markers (xterm's mode
- * 2004), tracked so a rejected chunk never leaves the shell stuck inside a
- * paste whose start marker was already forwarded. */
+/* PATCH(fork, input rejection): after a rejection, the rest of a paste is
+ * dropped too (see copyIn()): until input pauses for DROP_PAUSE_MILLIS, or,
+ * in a bracketed paste (xterm's mode 2004), up to the paste's end marker;
+ * either way for at most DROP_MAX_MILLIS from the rejection. luit can't
+ * know that an end marker will come (VS Code's
+ * terminal.integrated.ignoreBracketedPasteMode, a reset, a lost
+ * connection), so whatever decides how the drop ends, the bound ends it.
+ * A rest arriving later gets through, as luit can't tell it from typing.
+ *
+ * Paste markers in input aren't passed on as they come: input that may be
+ * one (ESC [ 2 0 0 ~ or ESC [ 2 0 1 ~ so far) is held until it is one, or
+ * isn't (then it's input like any other), and luit passes on a whole
+ * marker by its own rules (pasteMarker()). So the shell never gets part of
+ * one. A lone ESC at the end of a read is held for HOLD_MILLIS at most
+ * (flushHeldInput()): it's what the Escape key sends. */
 static const unsigned char PASTE_START[] = "\033[200~";
 static const unsigned char PASTE_END[] = "\033[201~";
-#define PASTE_MARKER_LEN 6
+#define DROP_PAUSE_MILLIS 50.0
+#define DROP_MAX_MILLIS 2000.0
+
+typedef enum {
+    DROP_NONE,
+    DROP_TO_PAUSE,
+    DROP_TO_END
+} DropMode;
+
+static DropMode dropping = DROP_NONE;
+static double drop_started = 0.0;	/* when the rejection was */
+static double drop_last = 0.0;	/* when input was last dropped */
+/* the program has bracketed paste on (trackPasteMode()) */
+static int paste_mode = 0;
+/* the terminal has sent a paste's start marker but not its end marker,
+ * since when */
+static int in_paste = 0;
+static double paste_started = 0.0;
+/* the shell got a paste's start marker but not its end marker */
 static int paste_open = 0;
+/* input that may be a paste marker, held, and whether it came with input
+ * that was rejected or dropped (then it's dropped too if it isn't one) */
+static unsigned char held[PASTE_MARKER_LEN];
+static size_t held_len = 0;
+static double held_since = 0.0;
+static int held_dropped = 0;
+
+/* what copyIn() has rejected in the chunk it's converting */
+static int chunk_rejected = 0;
+static unsigned chunk_rejected_char = 0;
 
 /* PATCH(fork, input backpressure): converted input waiting for the pty.
  * Writes to it are non-blocking, and upstream ignored a short write, so
@@ -447,10 +487,9 @@ static int paste_open = 0;
  * buffer is small, as on macOS) was lost. luit now keeps the rest and
  * doesn't read more input until it's gone (see parent() in luit.c), while
  * still reading the program's output, so neither side can deadlock.
- * copyIn() only runs once this is empty, and queues either one chunk's
- * conversion or PASTE_END, so it never holds more than CONVERTED_CHUNK_MAX
- * bytes. */
-static unsigned char input_pending[CONVERTED_CHUNK_MAX];
+ * copyIn() only runs once this is empty, and queues at most one chunk's
+ * conversion and what earlier chunks held (see INPUT_PENDING_MAX). */
+static unsigned char input_pending[INPUT_PENDING_MAX];
 static size_t input_pending_len = 0;
 
 /* PATCH(fork, input rejection): the first character copyIn() couldn't
@@ -472,7 +511,7 @@ inputPending(void)
 }
 
 /* Moves all held-back input into dst, which has room for
- * CONVERTED_CHUNK_MAX bytes, and returns its length */
+ * INPUT_PENDING_MAX bytes, and returns its length */
 size_t
 takeInput(unsigned char *dst)
 {
@@ -515,44 +554,128 @@ flushInput(int fd, int block)
     return rc;
 }
 
-static const unsigned char *
-findBytes(const unsigned char *hay, size_t n, const unsigned char *needle, size_t m)
+/* PATCH(fork, input rejection): puts the input parser where it would be
+ * after bytes it didn't see: dropped input, which ends with the drop, or a
+ * paste marker, which ends an escape sequence (an Escape key before it) and
+ * a cut UTF-8 sequence */
+static void
+resetInputParser(Iso2022Ptr is)
 {
-    size_t k;
-    for (k = 0; k + m <= n; k++) {
-	if (memcmp(hay + k, needle, m) == 0)
-	    return hay + k;
-    }
-    return NULL;
+    is->parserState = P_NORMAL;
+    buffered_input_count = 0;
 }
 
-/* Updates paste_open from the markers in a chunk that was forwarded */
+/* Ends a drop */
 static void
-trackPaste(const unsigned char *buf, size_t n)
+endDrop(Iso2022Ptr is)
 {
-    size_t k;
-    for (k = 0; k + PASTE_MARKER_LEN <= n; k++) {
-	if (memcmp(buf + k, PASTE_START, PASTE_MARKER_LEN) == 0)
-	    paste_open = 1;
-	else if (memcmp(buf + k, PASTE_END, PASTE_MARKER_LEN) == 0)
-	    paste_open = 0;
+    dropping = DROP_NONE;
+    resetInputParser(is);
+}
+
+/* Ends a drop at its bound or, if it goes until a pause, after one */
+static void
+checkDrop(Iso2022Ptr is, double now)
+{
+    if (dropping != DROP_NONE && now - drop_started >= DROP_MAX_MILLIS)
+	endDrop(is);
+    else if (dropping == DROP_TO_PAUSE && now - drop_last >= DROP_PAUSE_MILLIS)
+	endDrop(is);
+}
+
+/* PATCH(fork, input rejection): follows the program turning bracketed
+ * paste on and off in its output: ESC [ ? Pm h / l with 2004 among the
+ * parameters (ESC [ ? 2004 h, also combined as in ESC [ ? 1049 ; 2004 h),
+ * and a reset (ESC c), which turns it off. The state carries over between
+ * reads. */
+static enum {
+    OUT_TEXT,
+    OUT_ESC,
+    OUT_CSI,
+    OUT_PRIVATE
+} out_state = OUT_TEXT;
+static unsigned out_param = 0;
+static int out_has_2004 = 0;
+
+static void
+pasteModeOff(void)
+{
+    paste_mode = 0;
+    in_paste = 0;		/* the program is done with pastes */
+    paste_open = 0;
+}
+
+static void
+trackPasteMode(const unsigned char *buf, size_t n)
+{
+    const unsigned char *s = buf, *end = buf + n;
+
+    while (s < end) {
+	unsigned char b;
+
+	if (out_state == OUT_TEXT) {
+	    s = memchr(s, ESC, (size_t) (end - s));
+	    if (s == NULL)
+		return;
+	    out_state = OUT_ESC;
+	    s++;
+	    continue;
+	}
+	b = *s++;
+	switch (out_state) {
+	case OUT_ESC:
+	    if (b == 'c')
+		pasteModeOff();
+	    out_state = (b == '[') ? OUT_CSI : (b == ESC) ? OUT_ESC : OUT_TEXT;
+	    break;
+	case OUT_CSI:
+	    out_state = (b == '?') ? OUT_PRIVATE : (b == ESC) ? OUT_ESC : OUT_TEXT;
+	    out_param = 0;
+	    out_has_2004 = 0;
+	    break;
+	case OUT_PRIVATE:
+	    if (b >= '0' && b <= '9') {
+		if (out_param < 100000)
+		    out_param = out_param * 10 + (unsigned) (b - '0');
+	    } else if (b == ';') {
+		out_has_2004 |= out_param == 2004;
+		out_param = 0;
+	    } else {
+		out_has_2004 |= out_param == 2004;
+		if (out_has_2004 && b == 'h')
+		    paste_mode = 1;
+		else if (out_has_2004 && b == 'l')
+		    pasteModeOff();
+		out_state = (b == ESC) ? OUT_ESC : OUT_TEXT;
+	    }
+	    break;
+	case OUT_TEXT:
+	    break;
+	}
     }
+}
+
+/* PATCH(fork, input rejection): forgets the paste state, for
+ * tests/paste_driver.c, which runs scenarios one after another on one
+ * input state */
+void
+resetPasteTracking(void)
+{
+    dropping = DROP_NONE;
+    in_paste = 0;
+    paste_open = 0;
+    held_len = 0;
 }
 
 /*
- * PATCH(fork, input rejection): converts one chunk of keyboard input
- * (UTF-8) and queues it (flushInput() writes it, takeInput() hands it
- * over) -- or, if any character in it can't be encoded, queues none of it
- * and returns 1, with the character in input_unencodable_char.
- * Substituting or dropping just that character would change what the
- * shell runs (`rm <emoji>*` would become `rm ?*` or `rm *`); the caller
- * rings the bell instead. `discard` drops the chunk without queueing it
- * (the caller uses it for input that follows a rejection, i.e. the rest of
- * a paste). Either way the parser state is still advanced, and an open
- * bracketed paste is closed.
+ * PATCH(fork, input rejection): converts keyboard input (UTF-8) and queues
+ * it -- or, if any character in it can't be encoded, queues none of it and
+ * returns 1, with the character in input_unencodable_char. Substituting or
+ * dropping just that character would change what the shell runs
+ * (`rm <emoji>*` would become `rm ?*` or `rm *`).
  */
-int
-copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
+static int
+convertUnit(Iso2022Ptr is, unsigned char *buf, int count)
 {
     unsigned char *c;
     int codepoint, rem;
@@ -561,7 +684,6 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
     int rejected = 0;
 
     assert(count <= BUFFER_SIZE);
-    assert(input_pending_len == 0);
 
     c = buf;
     rem = count;
@@ -927,17 +1049,196 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
 #undef EMIT
     }
 
-    if (discard || rejected) {
-	if (paste_open && findBytes(buf, (size_t) count, PASTE_END, PASTE_MARKER_LEN)) {
-	    queueInput(PASTE_END, (size_t) PASTE_MARKER_LEN);
-	    paste_open = 0;
-	}
-	return rejected;
-    }
-    trackPaste(buf, (size_t) count);
-    if (outlen > 0)
+    if (!rejected && outlen > 0)
 	queueInput(out, outlen);
-    return 0;
+    return rejected;
+}
+
+/* PATCH(fork, task command line): converts one chunk of input that isn't
+ * keyboard input (encodeLastArg()'s command line) as copyIn() converts
+ * text, and queues it, or returns 1 as it does. Escapes, paste markers
+ * among them, are text there, and the paste state is left alone. */
+int
+copyInText(Iso2022Ptr is, unsigned char *buf, int count)
+{
+    assert(input_pending_len == 0);
+    return convertUnit(is, buf, count);
+}
+
+/* PATCH(fork, input rejection): input between paste markers: dropped,
+ * rejected (which starts a drop) or converted and queued */
+static void
+inputText(Iso2022Ptr is, unsigned char *p, size_t n, double now)
+{
+    if (n == 0)
+	return;
+    checkDrop(is, now);
+    if (dropping != DROP_NONE) {
+	drop_last = now;
+    } else if (convertUnit(is, p, (int) n)) {
+	if (!chunk_rejected)
+	    chunk_rejected_char = input_unencodable_char;
+	chunk_rejected = 1;
+	dropping = (in_paste && paste_mode) ? DROP_TO_END : DROP_TO_PAUSE;
+	drop_started = drop_last = now;
+    }
+}
+
+/* PATCH(fork, input rejection): a whole paste marker in input. The shell
+ * gets a start marker unless it's dropped, and an end marker unless the
+ * start was dropped: it ends a paste the shell got the start of, or one
+ * whose start went through as text (cut by more than HOLD_MILLIS after its
+ * ESC, or by more than DROP_MAX_MILLIS later, see flushHeldInput()), which
+ * the shell may have taken for one. */
+static void
+pasteMarker(Iso2022Ptr is, int end, double now)
+{
+    resetInputParser(is);
+    checkDrop(is, now);
+    if (!end) {
+	if (!in_paste)
+	    paste_started = now;
+	in_paste = 1;
+	if (dropping != DROP_NONE) {
+	    drop_last = now;
+	} else if (!paste_open) {
+	    queueInput(PASTE_START, PASTE_MARKER_LEN);
+	    paste_open = 1;
+	}
+	return;
+    }
+    if (paste_open || !in_paste)
+	queueInput(PASTE_END, PASTE_MARKER_LEN);
+    in_paste = 0;
+    paste_open = 0;
+    if (dropping == DROP_TO_END)
+	endDrop(is);
+    else if (dropping != DROP_NONE)
+	drop_last = now;
+}
+
+/* PATCH(fork, input rejection): whether held input can still become a
+ * paste marker with b */
+static int
+heldContinues(unsigned char b)
+{
+    if (held_len == 4)		/* ESC [ 2 0, then 0 to start or 1 to end */
+	return b == '0' || b == '1';
+    return b == PASTE_START[held_len];
+}
+
+/* Passes the first n bytes held, from earlier reads, on as input like any
+ * other, or drops them with the input they came with, and forgets what's
+ * held */
+static void
+releaseHeld(Iso2022Ptr is, size_t n, double now)
+{
+    unsigned char bytes[PASTE_MARKER_LEN];
+
+    held_len = 0;
+    if (held_dropped)
+	return;
+    memcpy(bytes, held, n);
+    inputText(is, bytes, n, now);
+}
+
+int
+inputHeld(void)
+{
+    return held_len > 0;
+}
+
+/* PATCH(fork, input rejection): passes on what's held once it has been for
+ * HOLD_MILLIS if it's a lone ESC (an Escape key, most likely), or for
+ * DROP_MAX_MILLIS if it's more (no key sends ESC [ 2 0 alone), returning 1
+ * if it did. Not in a paste: there what's held is the paste's, most likely
+ * the start of its end marker, which the terminal always sends, and passing
+ * it on as text would leave the shell in the paste. A shell in the paste
+ * takes an Escape key as text anyway, so what's held there waits for what
+ * comes next; in a paste the shell didn't get the start of (dropped), for
+ * DROP_MAX_MILLIS from its start at most, in case no end marker comes. */
+int
+flushHeldInput(Iso2022Ptr is, double now)
+{
+    double hold = (held_len == 1) ? HOLD_MILLIS : DROP_MAX_MILLIS;
+
+    if (held_len == 0 || now - held_since < hold || paste_open
+	|| (in_paste && now - paste_started < DROP_MAX_MILLIS))
+	return 0;
+    releaseHeld(is, held_len, now);
+    return 1;
+}
+
+/*
+ * PATCH(fork, input rejection): converts one chunk of keyboard input and
+ * queues it (flushInput() writes it, takeInput() hands it over), `now`
+ * being the time in milliseconds. The chunk is handled in parts between
+ * paste markers, which are handled on their own (see pasteMarker()): a part
+ * with a character that can't be encoded is rejected as a whole (see
+ * convertUnit()), escapes in it included, and what follows it dropped (see
+ * DROP_MAX_MILLIS). What's held at the chunk's end (see flushHeldInput())
+ * goes with the part before it: if it isn't a marker, it's dropped if that
+ * part was, or else passed on by itself, and what the next chunk added to
+ * it goes with that chunk. Returns 1 if anything was rejected (the caller
+ * rings the bell), with the first character that couldn't be encoded in
+ * input_unencodable_char.
+ */
+int
+copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
+{
+    size_t n = (size_t) count, from = 0, held_at = 0, k;
+    size_t carried = held_len;	/* held from earlier chunks */
+    int held_here = 0;		/* what's held starts at buf + held_at */
+
+    assert(count <= BUFFER_SIZE);
+    assert(input_pending_len == 0);
+    chunk_rejected = 0;
+
+    for (k = 0; k < n; k++) {
+	unsigned char b = buf[k];
+
+	if (held_len > 0) {
+	    if (heldContinues(b)) {
+		held[held_len++] = b;
+		held_since = now;
+		if (held_len == PASTE_MARKER_LEN) {
+		    if (held_here)
+			inputText(is, buf + from, held_at - from, now);
+		    held_len = 0;
+		    held_here = 0;
+		    pasteMarker(is, held[4] == '1', now);
+		    from = k + 1;
+		}
+		continue;
+	    }
+	    /* not a marker after all */
+	    if (held_here) {
+		held_len = 0;	/* part of the text from `from` */
+		held_here = 0;
+	    } else {
+		releaseHeld(is, carried, now);	/* buf from 0 is text */
+	    }
+	}
+	if (b == ESC) {
+	    held[0] = b;
+	    held_len = 1;
+	    held_since = now;
+	    held_at = k;
+	    held_here = 1;
+	}
+    }
+    if (held_len == 0) {
+	inputText(is, buf + from, n - from, now);
+    } else if (held_here) {
+	inputText(is, buf + from, held_at - from, now);
+	checkDrop(is, now);
+	held_dropped = dropping != DROP_NONE;
+	if (held_dropped)
+	    drop_last = now;
+    }
+    if (chunk_rejected)
+	input_unencodable_char = chunk_rejected_char;
+    return chunk_rejected;
 }
 
 #define PAIR(a,b) ((unsigned) ((a) << 8) | (b))
@@ -994,6 +1295,7 @@ copyOut(Iso2022Ptr is, int fd, unsigned char *buf, unsigned count)
 
     if (ilog >= 0)
 	IGNORE_RC(write(ilog, buf, (size_t) count));
+    trackPasteMode(buf, (size_t) count);	/* PATCH(fork, input rejection) */
 
     while (s < buf + count) {
 	switch (is->parserState) {
