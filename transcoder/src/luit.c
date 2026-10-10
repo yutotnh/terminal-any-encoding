@@ -61,6 +61,7 @@ static const char *notify_path = NULL;
 static const char *title_suffix = NULL;
 static char *title_area = NULL;
 static size_t title_area_len = 0;
+static char **title_argv = NULL;	/* the arguments, moved out of title_area */
 /* PATCH(fork, task command line): see encodeLastArg() */
 static int encode_last_arg = 0;
 /* PATCH(fork, inverted tree): the shell's pid, which VS Code knows this
@@ -648,11 +649,16 @@ claimTitleArea(int *argcp, char ***argvp)
 	return;
     for (k = 0; k < *argcp; k++) {
 	copy[k] = strmalloc((*argvp)[k]);
-	if (copy[k] == NULL)
+	if (copy[k] == NULL) {
+	    while (k-- > 0)
+		free(copy[k]);
+	    free(copy);
 	    return;
+	}
     }
     title_area = (*argvp)[0];
     title_area_len = (size_t) (end - title_area);
+    title_argv = copy;
     *argvp = copy;
     /* Started through a link named like the shell (see expandArgsFromEnv),
      * luit's command name would be "bash": `pgrep bash`/`killall bash`
@@ -1391,7 +1397,7 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	ExitFailure();
     }
     if (helper == 0) {
-	pid_t converter;
+	pid_t converter_pid;
 	/* Out of the shell's process group before the shell can exist: the
 	 * shell takes the inner pty with its group as the foreground one,
 	 * and when it exits (a session leader), that group gets SIGHUP. A
@@ -1399,9 +1405,9 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	 * would die before reading anything, so a command that printed and
 	 * exited at once would show nothing. */
 	(void) setsid();
-	converter = fork();
-	if (converter != 0)
-	    _exit(converter < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
+	converter_pid = fork();
+	if (converter_pid != 0)
+	    _exit(converter_pid < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
 	/* the converter, now an orphan: takes the outer terminal, which
 	 * nobody has now, to get its SIGWINCH and SIGHUP */
 	(void) setsid();
@@ -1494,5 +1500,12 @@ luit_leaks(void)
 {
     destroyIso2022(inputState);
     destroyIso2022(outputState);
+    if (title_argv != NULL) {	/* PATCH(fork, title) */
+	char **p;
+	for (p = title_argv; *p != NULL; p++)
+	    free(*p);
+	free(title_argv);
+	title_argv = NULL;
+    }
 }
 #endif
