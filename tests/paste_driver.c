@@ -537,6 +537,62 @@ heldIntoRejected(void)
     }
 }
 
+/*
+ * An escape left open before a paste marker (an Escape key, or one ending
+ * the paste's content) is ended by the marker, as the marker's bytes would
+ * end it: what comes right after the marker is converted as itself, the
+ * snowman after a start marker rejected, a typed character after an end
+ * marker passed on.
+ */
+static void
+escapeBeforeMarker(void)
+{
+    static const double gaps[] = { 0.0, 20.0, 100.0 };
+    int bracketed, cut, g;
+
+    for (bracketed = 0; bracketed <= 1; bracketed++) {
+	/* cut: 0 one read, 1 after the first ESC, 2 before the end marker */
+	for (cut = 0; cut <= 2; cut++) {
+	    for (g = 0; g < (int) (sizeof(gaps) / sizeof(gaps[0])); g++) {
+		Read reads[4];
+		char what[96];
+		int n;
+		const char *expect;
+		const int cuts[] = { cut == 1 ? 1 : -1 };
+		const int end_cuts[] = { cut == 2 ? (int) strlen(START "pq\033") : -1 };
+
+		snprintf(what, sizeof(what), "bracketed %s, %s, cut %d, gap %.0f",
+			 bracketed ? "on" : "off", "Escape before a paste", cut, gaps[g]);
+		n = split("\033" START SNOWMAN "rs" END, cuts, &gaps[g], 1, reads);
+		reads[n].delay = BOUND + 100.0;
+		strcpy(reads[n++].bytes, "ok");
+		expect = "\033" START END "ok";
+		scenarios++;
+		setUp(bracketed);
+		feed(reads, n);
+		if (shell_len != strlen(expect) || memcmp(shell, expect, shell_len))
+		    fail("what follows a marker converted as itself", what, reads, n);
+		else if (bells != 1)
+		    fail("one bell", what, reads, n);
+
+		snprintf(what, sizeof(what), "bracketed %s, %s, cut %d, gap %.0f",
+			 bracketed ? "on" : "off", "ESC ending a paste", cut, gaps[g]);
+		n = split(START "pq\033" END, end_cuts, &gaps[g], 1, reads);
+		reads[n].delay = 300.0;
+		strcpy(reads[n++].bytes, "\343\201\202ok");	/* U+3042 */
+		expect = START "pq\033" END "\244\242ok";	/* in EUC-JP */
+		scenarios++;
+		setUp(bracketed);
+		feed(reads, n);
+		if (shell_len != strlen(expect) || memcmp(shell, expect, shell_len))
+		    fail("what follows a marker converted as itself", what, reads, n);
+		else if (bells != 0)
+		    fail("no bell", what, reads, n);
+	    }
+	}
+    }
+}
+
 /* A key held down after a rejection, 10 ms apart: dropped for the bound,
  * then let through */
 static void
@@ -574,6 +630,7 @@ main(void)
     pasteAfterBound();
     escapesInRejected();
     heldIntoRejected();
+    escapeBeforeMarker();
     heldKey();
     printf("%d of %d scenarios kept every rule\n", scenarios - failures, scenarios);
     return failures ? 1 : 0;

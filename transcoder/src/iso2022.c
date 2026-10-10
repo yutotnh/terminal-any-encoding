@@ -554,14 +554,23 @@ flushInput(int fd, int block)
     return rc;
 }
 
-/* PATCH(fork, input rejection): ends a drop (the parser didn't see the
- * dropped bytes) */
+/* PATCH(fork, input rejection): puts the input parser where it would be
+ * after bytes it didn't see: dropped input, which ends with the drop, or a
+ * paste marker, which ends an escape sequence (an Escape key before it) and
+ * a cut UTF-8 sequence */
+static void
+resetInputParser(Iso2022Ptr is)
+{
+    is->parserState = P_NORMAL;
+    buffered_input_count = 0;
+}
+
+/* Ends a drop */
 static void
 endDrop(Iso2022Ptr is)
 {
     dropping = DROP_NONE;
-    is->parserState = P_NORMAL;
-    buffered_input_count = 0;
+    resetInputParser(is);
 }
 
 /* Ends a drop at its bound or, if it goes until a pause, after one */
@@ -1081,6 +1090,7 @@ inputText(Iso2022Ptr is, unsigned char *p, size_t n, double now)
 static void
 pasteMarker(Iso2022Ptr is, int end, double now)
 {
+    resetInputParser(is);
     checkDrop(is, now);
     if (!end) {
 	if (!in_paste)

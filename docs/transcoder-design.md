@@ -174,7 +174,9 @@ the time faked:
   be encoded is rejected by itself (the notification still names the first
   one). A part is rejected as a whole, other escapes in it (keys such as
   `ESC [D`) included, and so is what's held at the end of a rejected read
-  if it doesn't turn out to be a marker.
+  if it doesn't turn out to be a marker. Input after a marker is converted
+  as if the marker had gone through the converter, which ends an escape
+  left open before it (an Escape key right before a paste).
 
 A lone ESC is what the Escape key sends, so one held at the end of a read
 goes on as a key after 10 ms if nothing follows; more of a marker

@@ -126,6 +126,8 @@ INPUT_REJECTION_SEQUENCE_CASES = [
      "^[[200~\aok", "a start marker typed key by key isn't one (the Escape key goes on after 10 ms)"),
     ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "x")], None, "^[x", "an Escape key alone goes through"),
     ("euc-jp-2007", [(0.0, "echo A\n\x1b[D☃"), (0.3, "x")], None, "\ax", "a read with a key's escape in it is still rejected as a whole"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "\x1b[200~あいう\x1b[201~"), (0.3, "ok")], BP_ON, "^[^[[200~あいう^[[201~ok",
+     "a paste right after an Escape key arrives as it is"),
     ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
 ]
 
