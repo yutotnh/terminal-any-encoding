@@ -122,7 +122,7 @@ INPUT_REJECTION_SEQUENCE_CASES = [
      "bracketed paste turned on in a combined sequence"),
     ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\a^[[200~ok", "a terminal reset turns bracketed paste off"),
     ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON, "\a^[[200~", "with bracketed paste on, input is held back up to the end marker"),
-    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")], BP_ON,
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")], BP_ON,
      "^[[200~\aok", "a start marker typed key by key isn't one (the Escape key goes on after 10 ms)"),
     ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "x")], None, "^[x", "an Escape key alone goes through"),
     ("euc-jp-2007", [(0.0, "\x1bあ")], None, "^[あ", "Alt with a non-ASCII key sends ESC and the character"),
