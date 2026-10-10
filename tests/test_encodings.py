@@ -410,16 +410,17 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
     os.close(slave)
     time.sleep(0.4)
     steps = text if isinstance(text, list) else [(0.0, text)]
-    # Each write its delay after the one before: sleep() overshoots by tens
-    # of ms on some runners (macOS), so it only sleeps to 2 ms before and
-    # waits out the rest. max_gap is the longest time between two writes.
+    # Each write its delay after the one before. sleep() overshoots by tens
+    # of ms on some runners (macOS), more than the 50 ms the drop's pause
+    # is, so delays under that are waited out without it, and longer ones
+    # sleep to 50 ms before. max_gap is the longest time between two writes.
     last = time.monotonic()
     max_gap = 0.0
     for delay, chunk in steps:
         due = last + delay
         left = due - time.monotonic()
-        if left > 0.002:
-            time.sleep(left - 0.002)
+        if left > 0.05:
+            time.sleep(left - 0.05)
         while time.monotonic() < due:
             pass
         now = time.monotonic()
@@ -454,10 +455,11 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
         return False, f"invalid UTF-8: {out!r}"
     if child_output is not None:
         got = got.replace(child_output, "", 1)
+    gap = f"longest gap between writes {max_gap * 1000:.0f} ms"
     if callable(expect):
-        return expect(got), f"got {got!r}, longest gap between writes {max_gap * 1000:.0f} ms"
+        return expect(got), f"got {got!r}, {gap}"
     if got != expect:
-        return False, f"{got!r} != expected {expect!r}"
+        return False, f"{got!r} != expected {expect!r}, {gap}"
     return True, f"round trip OK ({got!r})"
 
 
