@@ -692,11 +692,22 @@ convertUnit(Iso2022Ptr is, unsigned char *buf, int count)
 
     while (rem > 0) {
 	codepoint = -1;
+	/* PATCH(fork, input parser): a non-ASCII byte ends an escape
+	 * sequence and is converted as the start of a character: upstream
+	 * passed it on as a character of its own (ESC then the first byte of
+	 * U+3042 sent U+00E3, and an unencodable character after an ESC got
+	 * through mangled instead of being rejected) */
+	if (is->parserState != P_NORMAL && (*c & 0x80)) {
+	    is->parserState = P_NORMAL;
+	    continue;
+	}
 	if (is->parserState == P_ESC) {
 	    assert(buffered_input_count == 0);
 	    codepoint = *c;
 	    NEXT;
-	    if (*c == CSI_7)
+	    /* PATCH(fork, input parser): the byte taken, not the one after
+	     * it, which upstream read past the input's end */
+	    if (codepoint == CSI_7)
 		is->parserState = P_CSI;
 	    else if (IS_FINAL_ESC(codepoint))
 		is->parserState = P_NORMAL;
