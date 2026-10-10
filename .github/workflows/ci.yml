@@ -84,18 +84,20 @@ jobs:
   sanitizers:
     name: Transcoder under ASan + UBSan + LSan
     runs-on: ubuntu-24.04
-    env:
-      # Reports go to files: luit's stderr is the terminal, where the tests
-      # wouldn't see them
-      ASAN_OPTIONS: detect_leaks=1:log_path=${{ runner.temp }}/sanitizers/asan
-      UBSAN_OPTIONS: print_stacktrace=1:log_path=${{ runner.temp }}/sanitizers/ubsan
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential autoconf
+      # Reports go to files: luit's stderr is the terminal, where the tests
+      # wouldn't see them. Set here, as the runner context (its temporary
+      # directory) isn't available to a job's env.
+      - name: Send sanitizer reports to files
+        run: |
           mkdir -p "$RUNNER_TEMP/sanitizers"
+          echo "ASAN_OPTIONS=detect_leaks=1:log_path=$RUNNER_TEMP/sanitizers/asan" >> "$GITHUB_ENV"
+          echo "UBSAN_OPTIONS=print_stacktrace=1:log_path=$RUNNER_TEMP/sanitizers/ubsan" >> "$GITHUB_ENV"
       # ASan's shadow memory can't be placed with the kernel's highest
       # mmap randomization
       - name: Lower ASLR entropy for ASan
