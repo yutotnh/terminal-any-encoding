@@ -144,30 +144,45 @@ a different command, so what follows a rejection is dropped too:
   keystroke. A rest arriving later gets through: luit can't tell it from
   typing. Locally that doesn't happen: VS Code writes a paste to the pty at
   once (on Linux, 300 KB arrived within 3 ms), and luit reads what it drops
-  without waiting for the shell. If the drop ended at the bound with the
-  shell not in the paste, the paste's end marker is left out when it comes,
-  unless part of it already went through (then it's completed).
+  without waiting for the shell. The clock stops while luit waits for a
+  busy program to take what it converted before, so a rest waiting behind
+  that isn't late.
 
 Dropping up to the end marker needs bracketed paste on, which luit follows
 in the program's output (`ESC [?2004h`, also combined as in
-`ESC [?1049;2004h`, and `ESC [?2004l` or a reset, `ESC c`, to turn it off),
-and a start marker that arrived whole in one read, as the terminal writes a
-paste: one typed key by key doesn't count. The end marker is recognized
-split across reads. A read is handled in parts ending at each end marker,
-so input after a paste's end in the same read is converted on its own: a
-character there that can't be encoded is rejected by itself (the
-notification still names the first one). After a drop, what comes goes
-through as it is, as the rest of a paste does after the bound, even if it
-starts with the tail of an escape sequence the drop cut, except for a paste
-marker whose first bytes were dropped: that tail isn't passed on as text,
-the end marker reaches a shell that got the paste's start (whole, or the
-part of it it hasn't got), and a cut start marker isn't counted. Only the
-markers are worth the care: they decide whether the shell is in a paste,
-and an attempt to drop the rest of any cut sequence too had to guess where
-it ended and swallowed the keys after it. If the shell got the paste's
-start marker, it still gets the end marker, unless the program has turned
-bracketed paste off since. The paste state is reset after
-`-encode-last-arg` converts a task's command line.
+`ESC [?1049;2004h`, and `ESC [?2004l` or a reset, `ESC c`, to turn it off).
+
+The paste markers in input aren't passed on as they come. luit holds what
+may be one (`ESC [ 2 0 0`, so far) until it is one or isn't, and then
+passes on a whole marker by these rules, which `tests/paste_driver.c`
+checks for every way a rejected paste can be split into reads (cut in
+either marker, before the rejected character, with gaps around the pause
+and the bound), with the time faked:
+
+- The shell never gets part of a marker, and gets markers in order: a
+  start marker unless it's dropped, an end marker only if it got the
+  paste's start (one it didn't is a stray key, left out). So a start marker
+  goes through even when what follows it is rejected, and the shell gets an
+  empty paste.
+- A shell in a paste gets its end marker exactly once, when it comes,
+  dropped or not.
+- What comes after the drop goes through, including the rest of a paste
+  after the bound.
+- A read is handled in parts between markers, so input after a paste's end
+  in the same read is converted on its own: a character there that can't
+  be encoded is rejected by itself (the notification still names the first
+  one).
+
+A lone ESC is what the Escape key sends, so one held at the end of a read
+goes on as a key after 10 ms if nothing follows; more of a marker
+(`ESC [` ...) is held for 2 s at most, as no key sends it alone. Inside a
+paste what's held waits for what comes next (in a paste the shell didn't
+get the start of, for 2 s at most): it's most likely the start of the end
+marker, which the terminal always sends, and passing it on as text would
+leave the shell in the paste. An ESC that nothing follows for 10 ms
+outside a paste is taken for a key, so a start marker split right after its
+ESC by that long isn't one: luit can't tell the two apart. The paste state
+is reset after `-encode-last-arg` converts a task's command line.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a

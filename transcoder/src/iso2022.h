@@ -112,14 +112,11 @@ void reportIso2022(const char *, Iso2022Ptr);
 #define PASTE_MARKER_LEN 6
 #define INPUT_PENDING_MAX (CONVERTED_CHUNK_MAX + PASTE_MARKER_LEN)
 
-/* PATCH(fork, input rejection): what copyIn() did with a chunk */
-typedef enum {
-    INPUT_FORWARDED,
-    INPUT_REJECTED,
-    INPUT_DROPPED
-} InputResult;
-
-InputResult copyIn(Iso2022Ptr, unsigned char *, int, double);
+/* PATCH(fork, input rejection): see copyIn() and flushHeldInput() */
+#define HOLD_MILLIS 10.0
+int copyIn(Iso2022Ptr, unsigned char *, int, double);
+int inputHeld(void);
+int flushHeldInput(Iso2022Ptr, double);
 void resetPasteTracking(void);
 /* PATCH(fork, input rejection): see copyIn() */
 extern unsigned input_unencodable_char;

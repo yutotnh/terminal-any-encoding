@@ -856,14 +856,14 @@ encodeLastArg(int argc, char **argv)
     arg = (unsigned char *) argv[argc - 1];
     len = strlen((char *) arg);
     chunks = (len + BUFFER_SIZE - 1) / BUFFER_SIZE;
-    encoded = malloc(chunks * INPUT_PENDING_MAX + 1);
+    encoded = malloc(chunks * INPUT_PENDING_MAX + PASTE_MARKER_LEN + 1);
     if (encoded == NULL) {
 	perror("Couldn't convert the command line");
 	ExitFailure();
     }
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	if (copyIn(inputState, arg + done, (int) n, 0.0) != INPUT_FORWARDED) {
+	if (copyIn(inputState, arg + done, (int) n, 0.0)) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
@@ -871,6 +871,9 @@ encodeLastArg(int argc, char **argv)
 	size += takeInput(encoded + size);
 	done += n;
     }
+    /* an ESC at the end, held as copyIn() holds one (see flushHeldInput()) */
+    (void) flushHeldInput(inputState, HOLD_MILLIS);
+    size += takeInput(encoded + size);
     encoded[size] = '\0';
     resetPasteTracking();	/* the command line isn't keyboard input */
     encoded_arg = encoded;
@@ -1224,6 +1227,11 @@ parent(int sfd, int pty)
     int i;
     int rc;
     double title_due = 0.0;
+    /* PATCH(fork, input rejection): the time input waited for the pty to
+     * take what was converted before, which copyIn()'s clock leaves out:
+     * the rest of a paste waiting for a busy program isn't late */
+    double blocked = 0.0;
+    double blocked_since = -1.0;
 
     if (pipe_option) {
 	read_waitpipe(c2p_waitpipe);
@@ -1250,6 +1258,8 @@ parent(int sfd, int pty)
 	    }
 	    timeout = (int) (title_due - now) + 1;
 	}
+	if (inputHeld() && (timeout < 0 || timeout > (int) HOLD_MILLIS + 1))
+	    timeout = (int) HOLD_MILLIS + 1;	/* see flushHeldInput() */
 	rc = waitForInput(sfd, pty, inputPending(), timeout);
 
 	if (sigwinch_queued) {
@@ -1276,6 +1286,16 @@ parent(int sfd, int pty)
 	     * flushInput() in iso2022.c). */
 	    if ((rc & IO_PtyWritable) && flushInput(pty, 0) < 0)
 		break;
+	    {
+		double now = monotonicMillis();
+		if (inputPending()) {
+		    if (blocked_since < 0.0)
+			blocked_since = now;
+		} else if (blocked_since >= 0.0) {
+		    blocked += now - blocked_since;
+		    blocked_since = -1.0;
+		}
+	    }
 	    if ((rc & IO_CanRead) && !inputPending()) {
 		i = (int) read(sfd, buf, (size_t) BUFFER_SIZE);
 		if ((i == 0) || ((i < 0) && (errno != EAGAIN)))
@@ -1285,7 +1305,7 @@ parent(int sfd, int pty)
 		     * character is rejected as a whole, and the rest of a
 		     * paste after it dropped (see copyIn); the user gets a
 		     * bell for the rejection */
-		    if (copyIn(inputState, buf, i, monotonicMillis()) == INPUT_REJECTED) {
+		    if (copyIn(inputState, buf, i, monotonicMillis() - blocked)) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
@@ -1294,6 +1314,10 @@ parent(int sfd, int pty)
 		}
 	    }
 	}
+	if (!inputPending()
+	    && flushHeldInput(inputState, monotonicMillis() - blocked)
+	    && flushInput(pty, 0) < 0)
+	    break;
     }
 
     /* PATCH(fork, drain on exit): waits until whatever reads the outer

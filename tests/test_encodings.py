@@ -92,21 +92,18 @@ FALLBACK_INPUT_CASES = [
     ("GBK", "A☃B", None, "\a", "OTHER charset path (other_fork.c) rejects too"),
 ]
 
-# Input arriving in several reads after a rejection (a paste) is dropped
-# too, so the paste's tail alone can never reach the shell: inside a
-# bracketed paste up to its end marker, otherwise until input pauses for
-# 50 ms, and either way for at most 2 s from the rejection, as luit can't
-# know an end marker will come. The next input after that goes through. An
-# open bracketed paste is still closed. Bracketed paste counts as on once
-# the child has printed BP_ON, as a shell does.
+# Input arriving after a rejection (the rest of a paste) is dropped too:
+# inside a bracketed paste up to its end marker, otherwise until input
+# pauses for 50 ms, and either way for at most 2 s. Every way a paste can
+# be split into reads is checked by tests/paste_driver.c (run_paste_driver),
+# with the time faked; these run luit itself, for what that can't see: the
+# bell, the real clock, the program's output turning bracketed paste on and
+# off, and an Escape key held back for 10 ms at most. Paste markers are
+# passed on by luit whole, so a start marker reaches the shell even when
+# what follows it is rejected; the shell then gets an empty paste.
 # (encoding, [(delay before write, text)], child output, expected,
 # description; the inner tty echoes ESC as ^[)
 BP_ON = "\x1b[?2004h"
-
-
-def _a_after_cap(got: str) -> bool:
-    """The bell, then the a's after the 2 s bound: about 100 of the 300"""
-    return got.startswith("\a") and 5 <= got.count("a") <= 200
 
 
 def _escapes_then_i(got: str) -> bool:
@@ -118,66 +115,34 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], None, "\a", "the rest of a split paste is dropped too"),
     ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], None, "\aok", "input after a pause goes through again"),
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], None, "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste"),
-    # A start marker must never hold input back beyond the bound: the
-    # terminal may not send an end marker at all
-    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], None, "\aok", "with bracketed paste off, a start marker doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, "ok")], BP_ON, "\a^[[200~^[[201~ok",
+     "the rest of a bracketed paste is dropped up to its end marker, however late"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x"), (2.3, "ok")], BP_ON, "\a^[[200~ok", "no end marker: input is held back for 2 s at most"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\x1b[?1049;2004h", "\a^[[200~^[[201~ok",
+     "bracketed paste turned on in a combined sequence"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\a^[[200~ok", "a terminal reset turns bracketed paste off"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON, "\a^[[200~", "with bracketed paste on, input is held back up to the end marker"),
     ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")], BP_ON,
-     "^[[200~\aok", "a start marker typed key by key doesn't hold input back"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x"), (2.3, "ok")], BP_ON, "\aok", "no end marker: input is held back for 2 s at most"),
-    # Bracketed paste: dropped up to the end marker
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, "ok")], BP_ON, "\aok", "the rest of a bracketed paste is dropped up to its end marker, however late"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\aok", "an end marker split across reads ends the paste"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[201~ok")], BP_ON, "\aok", "input after the end marker in the same read goes through"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃\x1b[201~ok")], BP_ON, "\aok", "input after the end marker in the rejected read itself goes through"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[201~☃")], BP_ON, "\a\a", "a character after the end marker that can't be encoded is rejected on its own"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ -rf"), (0.3, " x\x1b[201~")], BP_ON, "^[[200~X\a^[[201~", "an open paste rejected in the middle is dropped and closed at its end marker"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, " y\x1b[20"), (0.3, "1~☃")], BP_ON, "^[[200~X y^[[20\a1~", "an end marker whose first part went through is completed, not sent again"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.6, " x\x1b[201~ok")], BP_ON, "\a xok", "after the bound, the end marker of the dropped paste is left out"),
-    # What the program printed decides whether markers count
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\x1b[?1049;2004h", "\aok", "bracketed paste turned on in a combined sequence"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\aok", "a terminal reset turns bracketed paste off"),
-    # The 50 ms pause can't be held open beyond the bound by input that
-    # keeps coming (a key held down after a rejection), 10 ms apart
-    ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "a")] * 300, None, _a_after_cap, "input that keeps coming is held back for 2 s at most"),
-    # What a drop cuts is dropped to its end: an escape sequence (a paste
-    # marker included) or a character whose start was dropped
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (0.3, "1~"), (0.3, "ok")], None, "^[[200~X\a^[[201~ok", "an end marker cut by the pause still closes the paste"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (2.3, "1~"), (0.3, "ok")], BP_ON, "^[[200~X\a^[[201~ok", "an end marker cut by the bound still closes the paste"),
-    ("euc-jp-2007", [(0.0, "☃ x\x1b[20"), (0.3, "0~abc")], None, "\aabc", "a start marker cut by the pause isn't sent or counted"),
-    ("euc-jp-2007", [(0.0, "☃\x1b[1;5"), (0.3, "Hok")], None, "\aHok", "after a pause, what comes is input of its own"),
-    # After the bound, what comes goes through as it is (as the rest of a
-    # paste does), and none of it is lost; only a paste marker the bound cut
-    # is completed for a shell in the paste
-    # (the bound falls between the end marker's halves, with input still
-    # coming; arriving otherwise, the marker closes the paste too)
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y"), (1.97, "\x1b[20"), (0.04, "1~"), (0.03, "ok")], BP_ON, "^[[200~X\a^[[201~ok",
-     "an end marker the bound cuts still closes the paste"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (1.85, "\x1b[")] + [(0.01, "1")] * 30 + [(0.01, "あok")], BP_ON,
-     lambda got: got.startswith("\a") and got.endswith("あok"), "after the bound, nothing that comes is lost"),
+     "^[[200~\aok", "a start marker typed key by key isn't one (the Escape key goes on after 10 ms)"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "x")], None, "^[x", "an Escape key alone goes through"),
     ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.3, " y\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\a y^[[201~ok", "after the bound, an end marker that partly went through is completed"),
 ]
 
-# The paste rules don't depend on the encoding, but rejecting does (OTHER
-# charsets, single-byte tables), and a read is converted in parts: the main
-# cases again in other encodings, with a character of each after the
-# paste's end. (GB18030 can encode every character, so it rejects nothing.)
+# Rejecting depends on the encoding (OTHER charsets, single-byte tables),
+# and a read is converted in parts: the main cases again in other
+# encodings, with a character of each after the paste's end. (GB18030 can
+# encode every character, so it rejects nothing.)
 for _enc, _ch in (("CP932", "あ"), ("GBK", "中"), ("CP1252", "é"), ("eucKR", "한")):
     INPUT_REJECTION_SEQUENCE_CASES += [
-        (_enc, [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, _ch + "ok")], BP_ON, "\a" + _ch + "ok",
+        (_enc, [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, _ch + "ok")], BP_ON, "\a^[[200~^[[201~" + _ch + "ok",
          "the rest of a bracketed paste is dropped up to its end marker"),
-        (_enc, [(0.0, "\x1b[200~rm ☃\x1b[201~" + _ch + "ok")], BP_ON, "\a" + _ch + "ok",
+        (_enc, [(0.0, "\x1b[200~rm ☃\x1b[201~" + _ch + "ok")], BP_ON, "\a^[[200~^[[201~" + _ch + "ok",
          "input after the end marker in the rejected read itself goes through"),
         (_enc, [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (0.3, "1~"), (0.3, "ok")], None, "^[[200~X\a^[[201~ok",
          "an end marker cut by the pause still closes the paste"),
-        (_enc, [(0.0, "\x1b[200~" + _ch + " ☃"), (0.3, " x\x1b[201~☃")], BP_ON, "\a\a",
+        (_enc, [(0.0, "\x1b[200~" + _ch + " ☃"), (0.3, " x\x1b[201~☃")], BP_ON, "\a^[[200~\a^[[201~",
          "a character after the end marker that can't be encoded is rejected on its own"),
     ]
-
-# Cases that need input to keep coming under 50 ms apart, the drop's pause.
-# macOS runners delay a write by up to 49 ms (measured), so these can't
-# set up there what they test, and run on Linux only.
-STEADY_INPUT_CASES = {"input that keeps coming is held back for 2 s at most"}
 
 # Chinese, Korean, and single-byte encodings
 # (encoding, input byte sequence (hex), expected code point, description)
@@ -944,6 +909,36 @@ def run_encode_last_arg_paste_state_case() -> tuple[bool, str]:
     return got == "\aok", f"got {got!r}"
 
 
+def run_paste_driver() -> tuple[bool, str]:
+    """tests/paste_driver.c, built against transcoder/src's objects (with the
+    flags configure chose, sanitizers included), feeds copyIn() every way a
+    rejected paste can be split into reads, with the time faked, and checks
+    what the shell gets."""
+    src = LUIT.parent
+    show = 'print:\n\t@echo "$(CC)|$(CPPFLAGS) $(CFLAGS)|$(LDFLAGS)|$(LIBS)|$(OBJS)"\n'
+    vars_ = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-", "print"], cwd=src,
+                           input=show, capture_output=True, text=True)
+    if vars_.returncode != 0:
+        return False, f"couldn't read the Makefile: {vars_.stderr.strip()}"
+    cc, cflags, ldflags, libs, objs = (v.split() for v in vars_.stdout.strip().split("|"))
+    with tempfile.TemporaryDirectory() as tmp:
+        luit_lib = os.path.join(tmp, "luit_lib.o")
+        driver = os.path.join(tmp, "paste_driver")
+        steps = [
+            [*cc, *cflags, "-Dmain=luit_main", "-c", "luit.c", "-o", luit_lib],
+            [*cc, *cflags, "-o", driver, str(REPO_ROOT / "tests" / "paste_driver.c"),
+             luit_lib, *[o for o in objs if o != "luit.o"], *ldflags, *libs],
+        ]
+        for step in steps:
+            built = subprocess.run(step, cwd=src, capture_output=True, text=True)
+            if built.returncode != 0:
+                return False, f"build failed: {built.stderr.strip()[-400:]}"
+        ran = subprocess.run([driver], capture_output=True, text=True, timeout=120)
+    lines = ran.stdout.strip().splitlines()
+    detail = "\n   ".join(lines[-20:]) if ran.returncode else (lines[-1] if lines else "no output")
+    return ran.returncode == 0, detail
+
+
 def run_classic_tree_case() -> tuple[bool, str]:
     """Without a controlling terminal of its own (not how terminals start
     shells) luit keeps the classic layout, shell as its child, and passes
@@ -1147,9 +1142,6 @@ def main() -> int:
 
     print("\n== input rejection across reads (real PTY round-trip) ==")
     for enc, steps, child_output, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
-        if desc in STEADY_INPUT_CASES and sys.platform == "darwin":
-            print(f"SKIP [{enc}] {desc} (needs writes under 50 ms apart; macOS runners lag up to 49 ms)")
-            continue
         total += 1
         ok, detail = run_fallback_input_case(enc, steps, None, expect, child_output=child_output)
         mark = "OK " if ok else "NG "
@@ -1165,6 +1157,13 @@ def main() -> int:
         print(f"{mark}[{enc}] {desc} -> {detail}")
         if not ok:
             failures += 1
+
+    print("\n== every split of a rejected paste (tests/paste_driver.c) ==")
+    total += 1
+    ok, detail = run_paste_driver()
+    print(f"{'OK ' if ok else 'NG '}{detail}")
+    if not ok:
+        failures += 1
 
     print("\n== reporting rejected input (-notify) ==")
     total += 1
