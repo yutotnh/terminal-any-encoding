@@ -78,7 +78,7 @@ typedef struct {
 
 /* PATCH(fork, cp932): CP932 (Windows-31J), looked up by its 2-byte codes
  * in one table rather than converted to JIS X 0208 like aux_sjis (see
- * other_ja.c) */
+ * other_fork.c) */
 typedef struct {
     FontMapPtr mapping;
     FontMapReversePtr reverse;
@@ -87,7 +87,7 @@ typedef struct {
 
 /* PATCH(fork, eucjp): EUC-JP from the three tables VS Code reads it with
  * (JIS X 0208 with its extensions, JIS X 0201 katakana after SS2, JIS X
- * 0212 after SS3), as an "other" charset; see other_ja.c. */
+ * 0212 after SS3), as an "other" charset; see other_fork.c. */
 typedef struct {
     FontMapPtr x0208mapping;
     FontMapPtr x0201mapping;
@@ -139,21 +139,21 @@ UINT mapping_hkscs(UINT, OtherStatePtr);
 UINT reverse_hkscs(UINT, OtherStatePtr);
 int stack_hkscs(UINT, OtherStatePtr);
 
-/* PATCH(fork, cp932): see other_ja.c */
+/* PATCH(fork, cp932): see other_fork.c */
 int init_cp932(OtherStatePtr);
 UINT mapping_cp932(UINT, OtherStatePtr);
 UINT reverse_cp932(UINT, OtherStatePtr);
 int stack_cp932(UINT, OtherStatePtr);
 
 /* PATCH(fork, gb18030): GB18030 with its 4-byte codes, on aux_gb18030 and
- * upstream's stack_gb18030() (see other_ja.c) */
+ * upstream's stack_gb18030() (see other_fork.c) */
 int init_gb18030x(OtherStatePtr);
 UINT mapping_gb18030x(UINT, OtherStatePtr);
 UINT reverse_gb18030x(UINT, OtherStatePtr);
 
 /* PATCH(fork, fallback): GBK, GB 2312, CP949 (EUC-KR) and Big5-HKSCS from
  * the fork's tables, on aux_gbk/aux_hkscs and upstream's
- * stack_gbk/stack_hkscs (see other_ja.c) */
+ * stack_gbk/stack_hkscs (see other_fork.c) */
 int init_gbkx(OtherStatePtr);
 UINT mapping_gbkx(UINT, OtherStatePtr);
 UINT reverse_gbkx(UINT, OtherStatePtr);

@@ -1,9 +1,9 @@
 /*
- * other_ja.c -- the fork's "other" charsets (fork-local, not upstream)
+ * other_fork.c -- the fork's "other" charsets (fork-local, not upstream)
  *
  * CP932, GB18030, GBK, GB 2312, CP949 (EUC-KR), Big5, Big5-HKSCS and
  * EUC-JP, each decoded and encoded with the fork's generated tables
- * (builtin_ja.c, from iconv-lite like VS Code's editor) the way VS Code
+ * (builtin_fork.c, from iconv-lite like VS Code's editor) the way VS Code
  * reads and writes them. Codes are the raw bytes, so no coordinate
  * transform is needed. See docs/transcoder-design.md.
  *

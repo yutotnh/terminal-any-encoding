@@ -31,7 +31,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## Conversion table data (transcoder/src/builtin_ja.c, transcoder/src/gb18030_ranges.c)
+## Conversion table data (transcoder/src/builtin_fork.c, transcoder/src/gb18030_ranges.c)
 
 - Generated from: iconv-lite, as @vscode/iconv-lite-umd 0.7.1 (the package
   VS Code itself reads and saves files with), by decoding every byte sequence

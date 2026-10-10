@@ -23,7 +23,7 @@ Then run `npm install`.
   reformat it, and keep hand-written changes as small as possible
   (`.prettierignore` already excludes it from Prettier).
 - **Don't hand-edit the generated conversion tables**
-  (`transcoder/src/builtin_ja.c` and similar). Regenerate them with
+  (`transcoder/src/builtin_fork.c` and similar). Regenerate them with
   `tools/gen-tables/gen_tables.py` (after `npm install`: the tables come from
   iconv-lite, the library VS Code decodes files with). To change a table, edit
   `tools/gen-tables/converters.json`, regenerate, and update

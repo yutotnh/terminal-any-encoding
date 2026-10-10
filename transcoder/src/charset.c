@@ -108,7 +108,7 @@ static FontencCharsetRec fontencCharsets[] =
     {"CP 1252",        T_128,   0,   "microsoft-cp1252", 0x80,   NULL, NULL},
     {"CP 1255",        T_128,   0,   "microsoft-cp1255", 0x80,   NULL, NULL},
     /* PATCH(fork, encodings): Windows code pages upstream has no charset
-     * for (it falls back to ISO 8859-1). Tables in builtin_ja.c. */
+     * for (it falls back to ISO 8859-1). Tables in builtin_fork.c. */
     {"CP 1253",        T_128,   0,   "microsoft-cp1253", 0x80,   NULL, NULL},
     {"CP 1254",        T_128,   0,   "microsoft-cp1254", 0x80,   NULL, NULL},
     {"CP 1256",        T_128,   0,   "microsoft-cp1256", 0x80,   NULL, NULL},
@@ -155,21 +155,21 @@ typedef struct _OtherCharset {
 static const OtherCharsetRec otherCharsets[] =
 {
     /* PATCH(fork, fallback): the fork's tables, without upstream's identity
-     * fallback (other_ja.c); bytes are still assembled by upstream's stack
+     * fallback (other_fork.c); bytes are still assembled by upstream's stack
      * functions. */
     {"GBK",        init_gbkx,    mapping_gbkx,    reverse_gbkx,    stack_gbk},
-    /* PATCH(fork, encodings): see other_ja.c */
+    /* PATCH(fork, encodings): see other_fork.c */
     {"GB2312",     init_gb2312x, mapping_gb2312x, reverse_gb2312x, stack_gbk},
     {"CP949",      init_cp949,   mapping_cp949,   reverse_cp949,   stack_gbk},
     {"UTF-8",      init_utf8,    mapping_utf8,    reverse_utf8,    stack_utf8},
     {"SJIS",       init_sjis,    mapping_sjis,    reverse_sjis,    stack_sjis},
     /* PATCH(fork, fallback): as GBK */
     {"BIG5-HKSCS", init_hkscsx,  mapping_hkscsx,  reverse_hkscsx,  stack_hkscs},
-    /* PATCH(fork, gb18030): with its 4-byte codes (other_ja.c) */
+    /* PATCH(fork, gb18030): with its 4-byte codes (other_fork.c) */
     {"GB18030",    init_gb18030x, mapping_gb18030x, reverse_gb18030x, stack_gb18030},
-    /* PATCH(fork, cp932): see other_ja.c */
+    /* PATCH(fork, cp932): see other_fork.c */
     {"CP932",      init_cp932,   mapping_cp932,   reverse_cp932,   stack_cp932},
-    /* PATCH(fork, big5) and PATCH(fork, eucjp): see other_ja.c */
+    /* PATCH(fork, big5) and PATCH(fork, eucjp): see other_fork.c */
     {"BIG5X",      init_big5x,   mapping_big5x,   reverse_big5x,   stack_hkscs},
     {"EUC-JP-2007", init_eucjpx, mapping_eucjpx,  reverse_eucjpx,  stack_eucjp},
     {NULL,         NULL,         NULL,            NULL,            NULL}
@@ -296,7 +296,7 @@ FontencCharsetReverse(unsigned int i, const CharsetRec * self)
 #ifdef USE_ICONV
 /*
  * PATCH(fork, fallback): the recode/reverse functions of a charset whose
- * table the fork generates (builtin_ja.c), chosen when the charset is
+ * table the fork generates (builtin_fork.c), chosen when the charset is
  * made (getFontencCharset()). A code without a character decodes to
  * U+FFFD, and a character without a code can't be encoded (-1), where
  * upstream's lookups take the code or character itself. The other
@@ -310,8 +310,8 @@ isForkTable(const char *xlfd)
 {
     int n;
 
-    for (n = 0; builtin_encodings_ja[n].name != NULL; ++n) {
-	if (!strcmp(xlfd, builtin_encodings_ja[n].name))
+    for (n = 0; builtin_encodings_fork[n].name != NULL; ++n) {
+	if (!strcmp(xlfd, builtin_encodings_fork[n].name))
 	    return 1;
     }
     return 0;
@@ -674,15 +674,15 @@ static const LocaleCharsetRec localeCharsets[] =
     {"TCVN",       0, 2, "ASCII", NULL,         "TCVN",          NULL,         NULL},
 
     /* PATCH(fork, encodings): GB 2312 and EUC-KR are read as VS Code reads
-     * them: with iconv-lite's gb2312 table, and as CP949 (other_ja.c). */
+     * them: with iconv-lite's gb2312 table, and as CP949 (other_fork.c). */
     {"GB2312",     0, 1, NULL,    NULL,         NULL,            NULL,         "GB2312"},
     {"eucJP",      0, 1, "ASCII", "JIS X 0208", "JIS X 0201:GR", "JIS X 0212", NULL},
-    /* PATCH(fork, eucjp): see other_ja.c */
+    /* PATCH(fork, eucjp): see other_fork.c */
     {"euc-jp-2007", 0, 1, NULL,    NULL,         NULL,            NULL,         "EUC-JP-2007"},
     {"eucKR",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP949"},
     {"eucCN",      0, 1, "ASCII", "GB 2312",    NULL,            NULL,         NULL},
     {"eucTW",      0, 1, "ASCII", "CNS11643-1", "CNS11643-2",    "CNS11643-3", NULL},
-    /* PATCH(fork, big5): see other_ja.c */
+    /* PATCH(fork, big5): see other_fork.c */
     {"Big5",       0, 1, NULL,    NULL,         NULL,            NULL,         "BIG5X"},
 
     {"gbk",        0, 1, NULL,    NULL,         NULL,            NULL,         "GBK"},
@@ -690,7 +690,7 @@ static const LocaleCharsetRec localeCharsets[] =
     {"SJIS",       0, 1, NULL,    NULL,         NULL,            NULL,         "SJIS"},
     {"Big5-HKSCS", 0, 1, NULL,    NULL,         NULL,            NULL,         "BIG5-HKSCS"},
     {"gb18030",    0, 1, NULL,    NULL,         NULL,            NULL,         "GB18030"},
-    /* PATCH(fork, cp932): see other_ja.c */
+    /* PATCH(fork, cp932): see other_fork.c */
     {"CP932",      0, 1, NULL,    NULL,         NULL,            NULL,         "CP932"},
 
     {NULL,         0, 0, NULL,    NULL,         NULL,            NULL,         NULL}

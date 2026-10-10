@@ -41,7 +41,7 @@
       "name": "cp932-direct-0",
       "encoding": "shiftjis",
       "plane": "raw2byte",
-      "comment": "Shift JIS as VS Code reads it (CP932), keyed on the raw bytes (other_ja.c): SJIS's coordinate formula can't handle the IBM extension rows.",
+      "comment": "Shift JIS as VS Code reads it (CP932), keyed on the raw bytes (other_fork.c): SJIS's coordinate formula can't handle the IBM extension rows.",
       "input_aliases": [
         {
           "source": "0x8160",
@@ -54,19 +54,19 @@
       "name": "gbk-0",
       "encoding": "gbk",
       "plane": "raw2byte",
-      "comment": "GBK, keyed on the raw bytes (other_ja.c)."
+      "comment": "GBK, keyed on the raw bytes (other_fork.c)."
     },
     {
       "name": "gb18030-2byte-0",
       "encoding": "gb18030",
       "plane": "raw2byte",
-      "comment": "GB18030's 1- and 2-byte part, keyed on the raw bytes (other_ja.c); the 4-byte part is gb18030_ranges.c."
+      "comment": "GB18030's 1- and 2-byte part, keyed on the raw bytes (other_fork.c); the 4-byte part is gb18030_ranges.c."
     },
     {
       "name": "big5hkscs-0",
       "encoding": "big5hkscs",
       "plane": "raw2byte",
-      "comment": "Big5-HKSCS, keyed on the raw bytes (other_ja.c)."
+      "comment": "Big5-HKSCS, keyed on the raw bytes (other_fork.c)."
     },
     {
       "name": "big5.eten-0",
@@ -78,13 +78,13 @@
       "name": "cp949-0",
       "encoding": "euckr",
       "plane": "raw2byte",
-      "comment": "EUC-KR as VS Code reads it (CP949, i.e. EUC-KR plus Unified Hangul Code), keyed on the raw bytes (other_ja.c)."
+      "comment": "EUC-KR as VS Code reads it (CP949, i.e. EUC-KR plus Unified Hangul Code), keyed on the raw bytes (other_fork.c)."
     },
     {
       "name": "gb2312-0",
       "encoding": "gb2312",
       "plane": "raw2byte",
-      "comment": "GB 2312 as VS Code reads it (iconv-lite's gb2312: GBK without its user-defined areas), keyed on the raw bytes (other_ja.c)."
+      "comment": "GB 2312 as VS Code reads it (iconv-lite's gb2312: GBK without its user-defined areas), keyed on the raw bytes (other_fork.c)."
     },
     {
       "name": "cp852-direct-0",
@@ -311,6 +311,6 @@
   ],
   "gb18030_4byte_ranges": {
     "encoding": "gb18030",
-    "comment": "GB18030's 4-byte region for the BMP as linear-index ranges; the supplementary planes are one formula (other_ja.c)."
+    "comment": "GB18030's 4-byte region for the BMP as linear-index ranges; the supplementary planes are one formula (other_fork.c)."
   }
 }

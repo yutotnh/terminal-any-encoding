@@ -88,7 +88,7 @@ FALLBACK_OUTPUT_CASES = [
 FALLBACK_INPUT_CASES = [
     ("euc-jp-2007", "A☃B", None, "\a", "unmapped character rejects the whole input (bell only)"),
     ("CP932", "A☃B", None, "\a", "CP932 unmapped character rejects the whole input (bell only)"),
-    ("GBK", "A☃B", None, "\a", "OTHER charset path (other_ja.c) rejects too"),
+    ("GBK", "A☃B", None, "\a", "OTHER charset path (other_fork.c) rejects too"),
 ]
 
 # Input arriving in several reads after a rejection (a paste) is dropped,
@@ -193,7 +193,7 @@ FALLBACK_REGRESSION_CASES = [
     ("CP932", "Hello, World!", "Hello, World!", "ASCII works under CP932 too"),
     ("euc-jp-2007", "髙鷗①〜", "髙鷗①～", "known Japanese characters (〜 comes back as ～, how 0xA1C1 is shown)"),
     ("CP932", "髙①〜", "髙①～", "known CP932 characters (〜 comes back as ～, how 0x8160 is shown)"),
-    # Encodings on the fork's own lookups (other_ja.c, and the fallback
+    # Encodings on the fork's own lookups (other_fork.c, and the fallback
     # handling in charset.c), which must still pass ASCII through.
     ("GBK", "Hello, World!", "Hello, World!", "ASCII under GBK (implementation replaced by the fork)"),
     ("BIG5-HKSCS", "Hello, World!", "Hello, World!", "ASCII under Big5-HKSCS (implementation replaced by the fork)"),

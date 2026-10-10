@@ -76,8 +76,8 @@ INSTALL_DIRS    = $(BINDIR) $(MANDIR)
 
 # PATCH(fork, build): the fork's own sources (the generated tables and its
 # "other" charsets) are part of every build.
-SRCS		= luit.c iso2022.c charset.c parser.c sys.c other.c fontenc.c @EXTRASRCS@ builtin_ja.c other_ja.c gb18030_ranges.c
-OBJS		= luit$o iso2022$o charset$o parser$o sys$o other$o fontenc$o @EXTRAOBJS@ builtin_ja$o other_ja$o gb18030_ranges$o
+SRCS		= luit.c iso2022.c charset.c parser.c sys.c other.c fontenc.c @EXTRASRCS@ builtin_fork.c other_fork.c gb18030_ranges.c
+OBJS		= luit$o iso2022$o charset$o parser$o sys$o other$o fontenc$o @EXTRAOBJS@ builtin_fork$o other_fork$o gb18030_ranges$o
 HDRS		= charset.h config.h iso2022.h luit.h luitconv.h other.h parser.h sys.h gb18030_ranges.h
 
        PROGRAMS = luit$x

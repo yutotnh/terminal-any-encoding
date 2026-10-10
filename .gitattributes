@@ -1,6 +1,6 @@
 # Normalize line endings to LF.
 #
-# transcoder/ (the luit fork) commits generated tables (builtin_ja.c etc.),
+# transcoder/ (the luit fork) commits generated tables (builtin_fork.c etc.),
 # and tools/gen-tables/gen_tables.py --check cross-checks their byte-content
 # hash against what gets generated. If they get mangled into CRLF the
 # hash stops matching, so eol=lf here isn't just formatting — it's a
@@ -8,7 +8,7 @@
 * text=auto eol=lf
 
 # Generated conversion tables. Marks them as never hand-edited, visibly in diffs too.
-transcoder/src/builtin_ja.c linguist-generated=true
+transcoder/src/builtin_fork.c linguist-generated=true
 transcoder/src/gb18030_ranges.c linguist-generated=true
 
 *.png binary

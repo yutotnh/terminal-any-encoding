@@ -88,7 +88,7 @@ int fill_fontenc = 0;
  * their data instead of ours, and musl's iconv, which the distributed
  * binaries have, knows none of CP1253/1254/1256/1257/1258/874. Every
  * charset the supported encodings use has a built-in table (builtin.c or
- * the fork's builtin_ja.c), so only those are used (-prefer can name one
+ * the fork's builtin_fork.c), so only those are used (-prefer can name one
  * other source to use instead). */
 UM_MODE lookup_order[] =
 {

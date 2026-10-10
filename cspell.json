@@ -84,7 +84,7 @@
   "ignorePaths": [
     "node_modules/**",
     "transcoder/vendor/**",
-    "transcoder/src/builtin_ja.c",
+    "transcoder/src/builtin_fork.c",
     "transcoder/src/*.h",
     "transcoder/src/*.c",
     "tools/gen-tables/golden/**",
