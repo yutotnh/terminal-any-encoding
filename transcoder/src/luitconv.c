@@ -752,7 +752,10 @@ findEncodingAlias(const char *encoding_name)
     return result;
 }
 
-static void
+/* PATCH(fork, builtin tables): returns 0 if a row's text couldn't be
+ * allocated (upstream wrote through the pointer unchecked); the caller then
+ * discards the half-made table (see initLuitConv()) */
+static int
 initializeBuiltInTable(LuitConv * data,
 		       const BuiltInCharsetRec * builtIn,
 		       int enc_file)
@@ -796,14 +799,8 @@ initializeBuiltInTable(LuitConv * data,
 		 * keeps the text */
 		free(data->table_utf8[j].text);
 		data->table_utf8[j].text = malloc(need + 1);
-		/* PATCH(fork, builtin tables): upstream wrote through the
-		 * pointer unchecked. Nothing undoes a half-made table, and
-		 * luit can't run without its tables, so it stops. */
-		if (data->table_utf8[j].text == NULL) {
-		    fprintf(stderr, "luit: out of memory loading %s\n",
-			    NonNull(builtIn->name));
-		    ExitFailure();
-		}
+		if (data->table_utf8[j].text == NULL)
+		    return 0;
 		data->table_utf8[j].size = need;
 		memcpy(data->table_utf8[j].text, buffer, need);
 	    }
@@ -817,6 +814,7 @@ initializeBuiltInTable(LuitConv * data,
 	    }
 	}
     }
+    return 1;
 }
 
 /* PATCH(fork, builtin tables): builtin_encodings_fork (luitconv.h) is an
@@ -964,6 +962,23 @@ finishIconvTable(LuitConv * latest)
     TRACE(("...finished LuitConv table for \"%s\"\n", NonNull(latest->encoding_name)));
 }
 
+/* PATCH(fork, builtin tables): frees a table that wasn't finished, so not
+ * yet in all_conversions */
+static void
+discardLuitConv(LuitConv * data)
+{
+    size_t n;
+
+    if (data->table_utf8 != NULL) {
+	for (n = 0; n < data->table_size; ++n)
+	    free(data->table_utf8[n].text);
+    }
+    free(data->table_utf8);
+    free(data->rev_index);
+    free(data->encoding_name);
+    free(data);
+}
+
 static FontMapPtr
 initLuitConv(const char *encoding_name,
 	     iconv_t my_desc,
@@ -1007,7 +1022,10 @@ initLuitConv(const char *encoding_name,
 	latest->encoding_name = strmalloc(encoding_name);
 	latest->iconv_desc = my_desc;
 	if (builtIn != NULL) {
-	    initializeBuiltInTable(latest, builtIn, enc_file);
+	    if (!initializeBuiltInTable(latest, builtIn, enc_file)) {
+		discardLuitConv(latest);	/* PATCH(fork, builtin tables) */
+		return NULL;
+	    }
 	} else if (length == MAX16) {
 	    initialize16bitTable(latest->encoding_name, &latest, 1);
 	} else {
