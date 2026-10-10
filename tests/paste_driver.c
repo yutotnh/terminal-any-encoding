@@ -1,8 +1,9 @@
 /*
  * Drives luit's input conversion (copyIn() in transcoder/src/iso2022.c)
- * through every way a rejected paste can be split into reads, and rejected
- * reads with other escapes in them, with the time faked, and checks what
- * the shell gets against the rules in docs/transcoder-design.md
+ * through every way a rejected paste can be split into reads, rejected
+ * reads with other escapes in them, and every way input with nothing
+ * rejected can be, with the time faked, and checks what the shell gets
+ * against the rules in docs/transcoder-design.md
  * ("Fallback design for conversion failures").
  * Built and run by tests/test_encodings.py against transcoder/src's
  * objects; prints each scenario that breaks a rule and exits 1 if any did.
@@ -593,6 +594,79 @@ escapeBeforeMarker(void)
     }
 }
 
+/*
+ * With nothing rejected, however input is cut into reads and however long
+ * between them, the shell gets the same bytes as from the whole input
+ * converted at once (copyInText(), on a state of its own), as main sends:
+ * markers and all.
+ */
+static void
+unrejectedSplits(void)
+{
+    static const char *const inputs[] = {
+	"ab" START "pq" END "ok",
+	"\033[D" START "\343\201\202" END "\033b",	/* U+3042 */
+	"\033" START "pq\033" END "\343\201\202",
+	START "pq" END START "rs" END,
+    };
+    static const double gaps[] = { 0.0, 20.0, 2100.0 };
+    const int gap_count = (int) (sizeof(gaps) / sizeof(gaps[0]));
+    static Iso2022Ptr whole_state;
+    int in, bracketed, c1, c2, g1, g2;
+
+    if (whole_state == NULL) {
+	whole_state = allocIso2022();
+	if (initIso2022("euc-jp-2007", NULL, whole_state) < 0) {
+	    fprintf(stderr, "couldn't set up EUC-JP\n");
+	    exit(2);
+	}
+    }
+    for (in = 0; in < (int) (sizeof(inputs) / sizeof(inputs[0])); in++) {
+	unsigned char expect[256];
+	size_t expect_len;
+	int len = (int) strlen(inputs[in]);
+
+	if (copyInText(whole_state, (unsigned char *) inputs[in], len)) {
+	    fprintf(stderr, "input %d rejected\n", in);
+	    exit(2);
+	}
+	expect_len = takeInput(expect);
+	for (bracketed = 0; bracketed <= 1; bracketed++) {
+	    for (c1 = 0; c1 < len; c1++) {
+		for (c2 = c1 + 1; c2 <= len; c2++) {
+		    for (g1 = 0; g1 < gap_count; g1++) {
+			for (g2 = 0; g2 < gap_count; g2++) {
+			    Read reads[3];
+			    int cuts[2];
+			    double cut_gaps[2];
+			    int n;
+			    char what[96];
+
+			    /* c1 0: one cut at c2 (none if c2 is the end) */
+			    cuts[0] = c1 == 0 ? -1 : c1;
+			    cuts[1] = c2 == len ? -1 : c2;
+			    if ((cuts[0] < 0 && g1 > 0) || (cuts[1] < 0 && g2 > 0))
+				continue;	/* the same split again */
+			    cut_gaps[0] = gaps[g1];
+			    cut_gaps[1] = gaps[g2];
+			    n = split(inputs[in], cuts, cut_gaps, 2, reads);
+			    snprintf(what, sizeof(what), "bracketed %s, input %d, cuts %d/%d, gaps %.0f/%.0f",
+				     bracketed ? "on" : "off", in, cuts[0], cuts[1], gaps[g1], gaps[g2]);
+			    scenarios++;
+			    setUp(bracketed);
+			    feed(reads, n);
+			    if (shell_len != expect_len || memcmp(shell, expect, shell_len))
+				fail("unrejected input arrives as main sends it", what, reads, n);
+			    else if (bells != 0)
+				fail("no bell", what, reads, n);
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
 /* A key held down after a rejection, 10 ms apart: dropped for the bound,
  * then let through */
 static void
@@ -631,6 +705,7 @@ main(void)
     escapesInRejected();
     heldIntoRejected();
     escapeBeforeMarker();
+    unrejectedSplits();
     heldKey();
     printf("%d of %d scenarios kept every rule\n", scenarios - failures, scenarios);
     return failures ? 1 : 0;

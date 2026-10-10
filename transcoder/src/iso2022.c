@@ -1085,8 +1085,11 @@ inputText(Iso2022Ptr is, unsigned char *p, size_t n, double now)
 }
 
 /* PATCH(fork, input rejection): a whole paste marker in input. The shell
- * gets a start marker unless it's dropped, and an end marker if it got the
- * start; one it didn't would be a stray key. */
+ * gets a start marker unless it's dropped, and an end marker unless the
+ * start was dropped: it ends a paste the shell got the start of, or one
+ * whose start wasn't taken for a marker (cut by more than HOLD_MILLIS
+ * after its ESC, see flushHeldInput()), which the shell may have taken
+ * for one. */
 static void
 pasteMarker(Iso2022Ptr is, int end, double now)
 {
@@ -1104,11 +1107,10 @@ pasteMarker(Iso2022Ptr is, int end, double now)
 	}
 	return;
     }
-    in_paste = 0;
-    if (paste_open) {
+    if (paste_open || !in_paste)
 	queueInput(PASTE_END, PASTE_MARKER_LEN);
-	paste_open = 0;
-    }
+    in_paste = 0;
+    paste_open = 0;
     if (dropping == DROP_TO_END)
 	endDrop(is);
     else if (dropping != DROP_NONE)

@@ -128,6 +128,8 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "echo A\n\x1b[D☃"), (0.3, "x")], None, "\ax", "a read with a key's escape in it is still rejected as a whole"),
     ("euc-jp-2007", [(0.0, "\x1b"), (0.3, "\x1b[200~あいう\x1b[201~"), (0.3, "ok")], BP_ON, "^[^[[200~あいう^[[201~ok",
      "a paste right after an Escape key arrives as it is"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "[200~abc\x1b[201~"), (0.3, "ok")], BP_ON, "^[[200~abc^[[201~ok",
+     "a paste whose start marker is cut after its ESC still gets its end marker"),
     ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
 ]
 
@@ -921,8 +923,8 @@ def run_encode_last_arg_paste_state_case() -> tuple[bool, str]:
 def run_paste_driver() -> tuple[bool, str]:
     """tests/paste_driver.c, built against transcoder/src's objects (with the
     flags configure chose, sanitizers included), feeds copyIn() every way a
-    rejected paste can be split into reads, with the time faked, and checks
-    what the shell gets."""
+    rejected paste, and input with nothing rejected, can be split into
+    reads, with the time faked, and checks what the shell gets."""
     src = LUIT.parent
     show = 'print:\n\t@echo "$(CC)|$(CPPFLAGS) $(CFLAGS)|$(LDFLAGS)|$(LIBS)|$(OBJS)"\n'
     vars_ = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-", "print"], cwd=src,
@@ -1167,7 +1169,7 @@ def main() -> int:
         if not ok:
             failures += 1
 
-    print("\n== every split of a rejected paste (tests/paste_driver.c) ==")
+    print("\n== every split of a paste (tests/paste_driver.c) ==")
     total += 1
     ok, detail = run_paste_driver()
     print(f"{'OK ' if ok else 'NG '}{detail}")

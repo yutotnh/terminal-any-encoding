@@ -157,14 +157,19 @@ may be one (`ESC [ 2 0 0`, so far) until it is one or isn't, and then
 passes on a whole marker by these rules, which `tests/paste_driver.c`
 checks for every way a rejected paste can be split into reads (cut in
 either marker, before the rejected character, with gaps around the pause
-and the bound), and for rejected reads with other escapes in them, with
-the time faked:
+and the bound), for rejected reads with other escapes in them, and for
+every way input with nothing rejected can be cut into two or three reads,
+with the time faked:
 
-- The shell never gets part of a marker, and gets markers in order: a
-  start marker unless it's dropped, an end marker only if it got the
-  paste's start (one it didn't is a stray key, left out). So a start marker
-  goes through even when what follows it is rejected, and the shell gets an
-  empty paste.
+- The shell never gets part of a marker: it gets a start marker unless
+  it's dropped, and an end marker unless the paste's start was (the end of
+  a paste whose start went through as text, cut after its ESC, goes
+  through too: the shell may have taken that start for one). So a
+  start marker goes through even when what follows it is rejected, and the
+  shell gets an empty paste.
+- With nothing rejected, the shell gets the same bytes however the input
+  is cut into reads and however long between them: those of the whole
+  input converted at once, as a task's command line is.
 - A shell in a paste gets its end marker exactly once, when it comes,
   dropped or not.
 - What comes after the drop goes through, including the rest of a paste
