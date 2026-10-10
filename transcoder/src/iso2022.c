@@ -433,20 +433,149 @@ fromUtf8(unsigned char *b)
 	return -1;
 }
 
-/* PATCH(fork, input rejection): bracketed paste markers (xterm's mode
- * 2004). With them, the rest of a paste whose chunk was rejected is
- * dropped up to the end marker however late it arrives, and a shell whose
- * paste start was already forwarded still gets the end marker. */
+/* PATCH(fork, input rejection): bracketed paste (xterm's mode 2004).
+ * While a program has it on, the terminal sends each paste between
+ * PASTE_START and PASTE_END, written at once, so a genuine start marker
+ * arrives whole at the start of a read; the end marker can be split
+ * across reads. With the markers, the rest of a paste whose chunk was
+ * rejected is dropped up to its end marker however late it arrives, and a
+ * shell that got the paste's start still gets its end. The mode is
+ * followed in the program's output (trackPasteMode()), so markers in input
+ * count only when the terminal can be sending them: a start marker typed
+ * or pasted as text never starts dropping that no end marker would end. */
 static const unsigned char PASTE_START[] = "\033[200~";
 static const unsigned char PASTE_END[] = "\033[201~";
 #define PASTE_MARKER_LEN 6
+static const unsigned char PASTE_MODE_ON[] = "\033[?2004h";
+static const unsigned char PASTE_MODE_OFF[] = "\033[?2004l";
+#define PASTE_MODE_LEN 8
+
+/* The last bytes of the previous read, to find a sequence split across
+ * reads; sent[] says which of them were forwarded to the program */
+typedef struct {
+    unsigned char bytes[PASTE_MODE_LEN - 1];
+    unsigned char sent[PASTE_MODE_LEN - 1];
+    size_t len;
+} SplitCarry;
+
+/* the program has bracketed paste on */
+static int paste_mode = 0;
+static SplitCarry output_carry;
 /* the shell got a paste's start marker but not its end marker yet */
 static int paste_open = 0;
 /* input is being dropped up to the current paste's end marker */
 static int paste_dropping = 0;
-/* the last bytes of the previous chunk, for a marker split across reads */
-static unsigned char paste_carry[PASTE_MARKER_LEN - 1];
-static size_t paste_carry_len = 0;
+static SplitCarry input_carry;
+
+/* Byte k of the carried bytes followed by buf */
+static unsigned char
+carriedByte(const SplitCarry * c, const unsigned char *buf, size_t k)
+{
+    return k < c->len ? c->bytes[k] : buf[k - c->len];
+}
+
+/* Whether seq starts at byte k of the carried bytes followed by buf (len
+ * bytes in all) */
+static int
+sequenceAt(const SplitCarry * c, const unsigned char *buf, size_t len,
+	   size_t k, const unsigned char *seq, size_t n)
+{
+    size_t i;
+
+    if (k + n > len)
+	return 0;
+    for (i = 0; i < n; i++) {
+	if (carriedByte(c, buf, k + i) != seq[i])
+	    return 0;
+    }
+    return 1;
+}
+
+/* Carries the last `keep` bytes of the carried bytes followed by buf over
+ * to the next read; `sent` says whether buf was forwarded */
+static void
+carryTail(SplitCarry * c, const unsigned char *buf, size_t n, size_t keep, int sent)
+{
+    unsigned char bytes[sizeof(c->bytes)];
+    unsigned char flags[sizeof(c->sent)];
+    size_t len = c->len + n;
+    size_t t = len < keep ? len : keep;
+    size_t i;
+
+    assert(keep <= sizeof(c->bytes));
+    for (i = 0; i < t; i++) {
+	size_t k = len - t + i;
+	bytes[i] = carriedByte(c, buf, k);
+	flags[i] = (unsigned char) (k < c->len ? c->sent[k] : sent);
+    }
+    memcpy(c->bytes, bytes, t);
+    memcpy(c->sent, flags, t);
+    c->len = t;
+}
+
+/* Follows the program turning bracketed paste on and off. This sees all of
+ * the program's output, so the ESCs are found with memchr(). */
+static void
+trackPasteMode(const unsigned char *buf, size_t n)
+{
+    size_t len = output_carry.len + n;
+    size_t k = 0;
+
+    for (;;) {
+	if (k < output_carry.len) {
+	    if (output_carry.bytes[k] != ESC) {
+		k++;
+		continue;
+	    }
+	} else {
+	    const unsigned char *esc = memchr(buf + (k - output_carry.len), ESC,
+					      len - k);
+	    if (esc == NULL)
+		break;
+	    k = output_carry.len + (size_t) (esc - buf);
+	}
+	if (sequenceAt(&output_carry, buf, len, k, PASTE_MODE_ON, PASTE_MODE_LEN)) {
+	    paste_mode = 1;
+	} else if (sequenceAt(&output_carry, buf, len, k, PASTE_MODE_OFF, PASTE_MODE_LEN)) {
+	    paste_mode = 0;
+	    paste_open = 0;	/* the program is done with pastes */
+	}
+	k++;
+    }
+    carryTail(&output_carry, buf, n, PASTE_MODE_LEN - 1, 0);
+}
+
+/* Follows the paste markers in a chunk of input: sets *inside after each
+ * one, and returns whether there was an end marker, with in *end_sent how
+ * many of its bytes, carried from the end of a forwarded chunk, the
+ * program already got. A start marker counts only whole within the chunk
+ * and with bracketed paste on (see PASTE_START). */
+static int
+scanPaste(const unsigned char *buf, size_t n, int sent, int *inside, size_t *end_sent)
+{
+    size_t len = input_carry.len + n;
+    size_t k;
+    int saw_end = 0;
+
+    for (k = 0; k < len; k++) {
+	if (carriedByte(&input_carry, buf, k) != ESC)
+	    continue;
+	if (paste_mode && k >= input_carry.len
+	    && sequenceAt(&input_carry, buf, len, k, PASTE_START, PASTE_MARKER_LEN)) {
+	    *inside = 1;
+	} else if (sequenceAt(&input_carry, buf, len, k, PASTE_END, PASTE_MARKER_LEN)) {
+	    size_t j;
+
+	    *inside = 0;
+	    saw_end = 1;
+	    *end_sent = 0;
+	    for (j = k; j < input_carry.len; j++)
+		*end_sent += input_carry.sent[j];
+	}
+    }
+    carryTail(&input_carry, buf, n, PASTE_MARKER_LEN - 1, sent);
+    return saw_end;
+}
 
 /* PATCH(fork, input backpressure): converted input waiting for the pty.
  * Writes to it are non-blocking, and upstream ignored a short write, so
@@ -522,48 +651,20 @@ flushInput(int fd, int block)
     return rc;
 }
 
-/* Follows the paste markers in a chunk, a marker split across chunks
- * included: sets *inside after each one, and returns whether there was an
- * end marker */
-static int
-scanPaste(const unsigned char *buf, size_t n, int *inside)
-{
-    unsigned char window[sizeof(paste_carry) + BUFFER_SIZE];
-    size_t len = paste_carry_len + n;
-    size_t k;
-    int saw_end = 0;
-
-    assert(n <= BUFFER_SIZE);
-    memcpy(window, paste_carry, paste_carry_len);
-    memcpy(window + paste_carry_len, buf, n);
-    for (k = 0; k + PASTE_MARKER_LEN <= len; k++) {
-	if (memcmp(window + k, PASTE_START, PASTE_MARKER_LEN) == 0) {
-	    *inside = 1;
-	} else if (memcmp(window + k, PASTE_END, PASTE_MARKER_LEN) == 0) {
-	    *inside = 0;
-	    saw_end = 1;
-	}
-    }
-    paste_carry_len = len < sizeof(paste_carry) ? len : sizeof(paste_carry);
-    memcpy(paste_carry, window + len - paste_carry_len, paste_carry_len);
-    return saw_end;
-}
-
 /*
  * PATCH(fork, input rejection): converts one chunk of keyboard input
  * (UTF-8) and queues it (flushInput() writes it, takeInput() hands it
- * over) -- or, if any character in it can't be encoded, queues none of it
- * and returns 1, with the character in input_unencodable_char.
- * Substituting or dropping just that character would change what the
- * shell runs (`rm <emoji>*` would become `rm ?*` or `rm *`); the caller
- * rings the bell instead. `discard` drops the chunk without queueing it
- * (the caller uses it for input that follows a rejection, i.e. the rest of
- * a paste). Inside a bracketed paste, input after a rejection is dropped
- * up to the paste's end marker whatever `discard` says, and returns 0. In
- * every case the parser state is still advanced, and a paste the shell
- * saw start is closed.
+ * over): INPUT_FORWARDED. If any character in it can't be encoded, none of
+ * it is queued: INPUT_REJECTED, with the character in
+ * input_unencodable_char. Substituting or dropping just that character
+ * would change what the shell runs (`rm <emoji>*` would become `rm ?*` or
+ * `rm *`); the caller rings the bell instead. The rest of a rejected paste
+ * is dropped too, INPUT_DROPPED: with `discard` (the caller's choice, for
+ * input soon after a rejection), and inside a bracketed paste up to its end
+ * marker. In every case the parser state is still advanced, and a paste
+ * the shell saw start is closed.
  */
-int
+InputResult
 copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
 {
     unsigned char *c;
@@ -571,6 +672,7 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
     unsigned char out[CONVERTED_CHUNK_MAX];
     size_t outlen = 0;
     int rejected = 0;
+    size_t end_sent = 0;
 
     assert(count <= BUFFER_SIZE);
     assert(input_pending_len == 0);
@@ -943,17 +1045,17 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
 	int was_dropping = paste_dropping;
 	int inside = paste_open || paste_dropping;
 
-	if (scanPaste(buf, (size_t) count, &inside) && paste_open) {
-	    queueInput(PASTE_END, (size_t) PASTE_MARKER_LEN);
+	if (scanPaste(buf, (size_t) count, 0, &inside, &end_sent) && paste_open) {
+	    queueInput(PASTE_END + end_sent, PASTE_MARKER_LEN - end_sent);
 	    paste_open = 0;
 	}
 	paste_dropping = inside;
-	return was_dropping ? 0 : rejected;
+	return (rejected && !discard && !was_dropping) ? INPUT_REJECTED : INPUT_DROPPED;
     }
-    (void) scanPaste(buf, (size_t) count, &paste_open);
+    (void) scanPaste(buf, (size_t) count, 1, &paste_open, &end_sent);
     if (outlen > 0)
 	queueInput(out, outlen);
-    return 0;
+    return INPUT_FORWARDED;
 }
 
 #define PAIR(a,b) ((unsigned) ((a) << 8) | (b))
@@ -1010,6 +1112,7 @@ copyOut(Iso2022Ptr is, int fd, unsigned char *buf, unsigned count)
 
     if (ilog >= 0)
 	IGNORE_RC(write(ilog, buf, (size_t) count));
+    trackPasteMode(buf, (size_t) count);	/* PATCH(fork, input rejection) */
 
     while (s < buf + count) {
 	switch (is->parserState) {

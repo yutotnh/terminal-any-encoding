@@ -310,8 +310,9 @@ isForkTable(const char *xlfd)
 {
     int n;
 
+    /* compared as findBuiltinEncoding() (luitconv.c) picks the table */
     for (n = 0; builtin_encodings_fork[n].name != NULL; ++n) {
-	if (!strcmp(xlfd, builtin_encodings_fork[n].name))
+	if (!lcStrCmp(xlfd, builtin_encodings_fork[n].name))
 	    return 1;
     }
     return 0;
@@ -321,11 +322,17 @@ static unsigned int
 ForkCharsetRecode(unsigned int n, const CharsetRec * self)
 {
     const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
-    unsigned found_value;
+    unsigned result;
 
-    if (luitMapCodeValueFound(n + fc->shift, fc->mapping, &found_value))
-	return found_value;
-    return UNICODE_REPLACEMENT_CHAR;
+    if (!luitMapCodeValueFound(n + fc->shift, fc->mapping, &result))
+	result = UNICODE_REPLACEMENT_CHAR;
+
+    TRACE(("ForkCharsetRecode %#x ->%#x%s\n",
+	   n,
+	   result,
+	   (n != result) ? " map" : ""));
+
+    return result;
 }
 
 static int
@@ -333,10 +340,17 @@ ForkCharsetReverse(unsigned int i, const CharsetRec * self)
 {
     const FontencCharsetRec *fc = (const FontencCharsetRec *) (self->data);
     unsigned n;
+    int result = -1;
 
-    if (!luitReverseFound(i, fc->reverse, &n))
-	return -1;
-    return FontencCharsetCode(n, self);
+    if (luitReverseFound(i, fc->reverse, &n))
+	result = FontencCharsetCode(n, self);
+
+    TRACE(("ForkCharsetReverse %#x ->%#x%s\n",
+	   i,
+	   result,
+	   ((int) i != result) ? " map" : ""));
+
+    return result;
 }
 #endif /* USE_ICONV */
 

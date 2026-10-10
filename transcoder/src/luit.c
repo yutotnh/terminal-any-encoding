@@ -834,7 +834,9 @@ encodeLastArg(int argc, char **argv)
     }
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	if (copyIn(inputState, arg + done, (int) n, 0)) {
+	/* No output has turned bracketed paste on yet, so the command line
+	 * leaves the paste state alone */
+	if (copyIn(inputState, arg + done, (int) n, 0) != INPUT_FORWARDED) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
@@ -1267,12 +1269,12 @@ parent(int sfd, int pty)
 		     * than the one pasted. */
 		    double now = monotonicMillis();
 		    int discard = now < reject_until;
-		    int rejected = copyIn(inputState, buf, i, discard);
-		    if (rejected && !discard) {
+		    InputResult result = copyIn(inputState, buf, i, discard);
+		    if (result == INPUT_REJECTED) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
-		    if (discard || rejected)
+		    if (result != INPUT_FORWARDED)
 			reject_until = now + REJECT_QUIET_MILLIS;
 		    if (flushInput(pty, 0) < 0)
 			break;

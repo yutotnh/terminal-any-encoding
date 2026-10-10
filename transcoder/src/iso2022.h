@@ -107,7 +107,14 @@ void reportIso2022(const char *, Iso2022Ptr);
 #define MAX_ENCODED_CHAR 4
 #define CONVERTED_CHUNK_MAX (BUFFER_SIZE * MAX_ENCODED_CHAR)
 
-int copyIn(Iso2022Ptr, unsigned char *, int, int);
+/* PATCH(fork, input rejection): what copyIn() did with a chunk */
+typedef enum {
+    INPUT_FORWARDED,
+    INPUT_REJECTED,
+    INPUT_DROPPED
+} InputResult;
+
+InputResult copyIn(Iso2022Ptr, unsigned char *, int, int);
 /* PATCH(fork, input rejection): see copyIn() */
 extern unsigned input_unencodable_char;
 /* PATCH(fork, input backpressure): see input_pending in iso2022.c */

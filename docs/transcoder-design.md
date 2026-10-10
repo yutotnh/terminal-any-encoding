@@ -133,9 +133,18 @@ could run a different command, so input after a rejection is dropped too:
 inside a bracketed paste (`ESC [200~` ... `ESC [201~`) up to its end marker,
 however late the rest arrives (over a remote connection it can come well
 apart), and otherwise until input pauses for 50 ms, since nothing else tells
-a paste's rest from what's typed next. Markers split across reads are
-recognized. If the paste's start marker was already forwarded, its end marker
-is still passed through so the shell doesn't stay in paste mode. Warning on stderr instead isn't an option either: the
+a paste's rest from what's typed next. If the paste's start marker was
+already forwarded, its end marker (or the part of it the shell hasn't got) is
+still passed through so the shell doesn't stay in paste mode.
+
+Dropping up to an end marker must only start when one is sure to come, or
+every keystroke after it would vanish. The terminal sends the markers only
+while the program has bracketed paste on (`ESC [?2004h` ... `ESC [?2004l`),
+which luit follows in the program's output, and it writes each paste at
+once, so a genuine start marker arrives whole at the start of a read. A start
+marker counts only then: one pasted as text with bracketed paste off, or
+typed key by key, doesn't. The end marker is recognized split across reads,
+as a long paste is read in 512-byte chunks. Warning on stderr instead isn't an option either: the
 messages would be mixed into the terminal output.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
