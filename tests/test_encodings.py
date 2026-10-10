@@ -105,8 +105,13 @@ BP_ON = "\x1b[?2004h"
 
 
 def _a_after_cap(got: str) -> bool:
-    """The bell, then some of the a's: those after the 2 s bound"""
-    return got.startswith("\a") and 5 <= got.count("a") < 300
+    """The bell, then the a's after the 2 s bound: about 100 of the 300"""
+    return got.startswith("\a") and 5 <= got.count("a") <= 200
+
+
+def _escapes_then_i(got: str) -> bool:
+    """The Escape key held after the bound goes through, then the i"""
+    return got.startswith("\a") and got.endswith("i") and got.count("^[") >= 5
 
 
 INPUT_REJECTION_SEQUENCE_CASES = [
@@ -139,7 +144,15 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (0.3, "1~"), (0.3, "ok")], None, "^[[200~X\a^[[201~ok", "an end marker cut by the pause still closes the paste"),
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (2.3, "1~"), (0.3, "ok")], BP_ON, "^[[200~X\a^[[201~ok", "an end marker cut by the bound still closes the paste"),
     ("euc-jp-2007", [(0.0, "☃ x\x1b[20"), (0.3, "0~abc")], None, "\aabc", "a start marker cut by the pause isn't sent or counted"),
-    ("euc-jp-2007", [(0.0, "☃\x1b[1;5"), (0.3, "Hok")], None, "\aok", "an escape sequence cut by the pause isn't sent"),
+    ("euc-jp-2007", [(0.0, "☃\x1b[1;5"), (0.3, "Hok")], None, "\aHok", "after a pause, what comes is input of its own"),
+    # At the bound with input still coming, the rest of a sequence the drop
+    # cut is dropped, and only that: nothing but whole sequences get
+    # through, and a key after a held Escape isn't lost
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (1.85, "\x1b[")] + [(0.01, "1")] * 30 + [(0.01, "H"), (0.03, "ok")], BP_ON, "\aok",
+     "the bound doesn't let the rest of a cut escape sequence through"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (1.85, "\x1b[")] + [(0.01, "1")] * 30 + [(0.01, "あok")], BP_ON, "\aあok",
+     "what doesn't continue a cut sequence is kept"),
+    ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
     ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.3, " y\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\a y^[[201~ok", "after the bound, an end marker that partly went through is completed"),
 ]
 
@@ -397,19 +410,18 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
     os.close(slave)
     time.sleep(0.4)
     steps = text if isinstance(text, list) else [(0.0, text)]
-    # Each write at its time from the first, waiting for short delays
-    # without sleep(), which overshoots by tens of ms on some runners
-    # (macOS); max_gap is the longest time between two writes
-    due = last = time.monotonic()
+    # Each write its delay after the one before: sleep() overshoots by tens
+    # of ms on some runners (macOS), so it only sleeps to 2 ms before and
+    # waits out the rest. max_gap is the longest time between two writes.
+    last = time.monotonic()
     max_gap = 0.0
     for delay, chunk in steps:
-        due += delay
-        while True:
-            left = due - time.monotonic()
-            if left <= 0:
-                break
-            if left > 0.05:
-                time.sleep(left - 0.05)
+        due = last + delay
+        left = due - time.monotonic()
+        if left > 0.002:
+            time.sleep(left - 0.002)
+        while time.monotonic() < due:
+            pass
         now = time.monotonic()
         max_gap = max(max_gap, now - last)
         last = now

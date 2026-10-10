@@ -106,9 +106,11 @@ void reportIso2022(const char *, Iso2022Ptr);
  * with a shift before and after it). */
 #define MAX_ENCODED_CHAR 4
 #define CONVERTED_CHUNK_MAX (BUFFER_SIZE * MAX_ENCODED_CHAR)
-/* PATCH(fork, input rejection): the most copyIn() queues for one chunk,
- * a chunk's conversion and one paste end marker */
-#define INPUT_PENDING_MAX (CONVERTED_CHUNK_MAX + 6)
+/* PATCH(fork, input rejection): the length of a bracketed paste marker,
+ * and the most copyIn() queues for one chunk: a chunk's conversion and one
+ * paste end marker */
+#define PASTE_MARKER_LEN 6
+#define INPUT_PENDING_MAX (CONVERTED_CHUNK_MAX + PASTE_MARKER_LEN)
 
 /* PATCH(fork, input rejection): what copyIn() did with a chunk */
 typedef enum {
