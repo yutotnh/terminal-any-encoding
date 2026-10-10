@@ -796,8 +796,11 @@ initializeBuiltInTable(LuitConv * data,
 		 * keeps the text */
 		free(data->table_utf8[j].text);
 		data->table_utf8[j].text = malloc(need + 1);
-		data->table_utf8[j].size = need;
-		memcpy(data->table_utf8[j].text, buffer, need);
+		data->table_utf8[j].size = 0;
+		if (data->table_utf8[j].text != NULL) {	/* else: no row */
+		    data->table_utf8[j].size = need;
+		    memcpy(data->table_utf8[j].text, buffer, need);
+		}
 	    }
 
 	    trace_convert(data, j, 0);

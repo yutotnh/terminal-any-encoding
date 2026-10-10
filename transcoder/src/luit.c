@@ -59,11 +59,18 @@ static const char *locale_name = NULL;
 static const char *notify_path = NULL;
 /* PATCH(fork, title): see claimTitleArea() and updateTitle() */
 static const char *title_suffix = NULL;
+#ifdef __linux__			/* the title only follows the program there */
 static char *title_area = NULL;
 static size_t title_area_len = 0;
-static char **title_argv = NULL;	/* the arguments, moved out of title_area */
-/* PATCH(fork, task command line): see encodeLastArg() */
+/* The arguments, moved out of title_area: the array main() goes on with,
+ * whose elements may be replaced (encodeLastArg()), and the strings */
+static char **title_argv = NULL;
+static char **title_strings = NULL;
+#endif
+/* PATCH(fork, task command line): see encodeLastArg(); encoded_arg is the
+ * converted argument, kept for luit_leaks() to free */
 static int encode_last_arg = 0;
+static unsigned char *encoded_arg = NULL;
 /* PATCH(fork, inverted tree): the shell's pid, which VS Code knows this
  * terminal by, when the process tree is inverted (see condomInverted);
  * 0 in the classic layout, where that pid is luit's own */
@@ -633,6 +640,7 @@ claimTitleArea(int *argcp, char ***argvp)
 {
 #ifdef __linux__
     char **copy;
+    char **strings;
     char *end;
     int k;
 
@@ -645,20 +653,27 @@ claimTitleArea(int *argcp, char ***argvp)
 	end += strlen((*argvp)[k]) + 1;
     }
     copy = (char **) calloc((size_t) *argcp + 1, sizeof(char *));
-    if (copy == NULL)
+    strings = (char **) calloc((size_t) *argcp + 1, sizeof(char *));
+    if (copy == NULL || strings == NULL) {
+	free(copy);
+	free(strings);
 	return;
+    }
     for (k = 0; k < *argcp; k++) {
-	copy[k] = strmalloc((*argvp)[k]);
-	if (copy[k] == NULL) {
+	strings[k] = strmalloc((*argvp)[k]);
+	if (strings[k] == NULL) {
 	    while (k-- > 0)
-		free(copy[k]);
+		free(strings[k]);
+	    free(strings);
 	    free(copy);
 	    return;
 	}
+	copy[k] = strings[k];
     }
     title_area = (*argvp)[0];
     title_area_len = (size_t) (end - title_area);
     title_argv = copy;
+    title_strings = strings;
     *argvp = copy;
     /* Started through a link named like the shell (see expandArgsFromEnv),
      * luit's command name would be "bash": `pgrep bash`/`killall bash`
@@ -849,6 +864,7 @@ encodeLastArg(int argc, char **argv)
 	done += n;
     }
     encoded[size] = '\0';
+    encoded_arg = encoded;
     argv[argc - 1] = (char *) encoded;
 }
 
@@ -1500,12 +1516,18 @@ luit_leaks(void)
 {
     destroyIso2022(inputState);
     destroyIso2022(outputState);
-    if (title_argv != NULL) {	/* PATCH(fork, title) */
+#ifdef __linux__
+    if (title_strings != NULL) {	/* PATCH(fork, title) */
 	char **p;
-	for (p = title_argv; *p != NULL; p++)
+	for (p = title_strings; *p != NULL; p++)
 	    free(*p);
+	free(title_strings);
 	free(title_argv);
+	title_strings = NULL;
 	title_argv = NULL;
     }
+#endif
+    free(encoded_arg);		/* PATCH(fork, task command line) */
+    encoded_arg = NULL;
 }
 #endif
