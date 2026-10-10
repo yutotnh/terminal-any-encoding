@@ -132,9 +132,15 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\x1b[?1049;2004h", "\aok", "bracketed paste turned on in a combined sequence"),
     ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\aok", "a terminal reset turns bracketed paste off"),
     # The 50 ms pause can't be held open beyond the bound by input that
-    # keeps coming (a key held down after a rejection). 10 ms apart, well
-    # inside the pause even where sleeps overshoot (macOS)
+    # keeps coming (a key held down after a rejection), 10 ms apart
     ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "a")] * 300, None, _a_after_cap, "input that keeps coming is held back for 2 s at most"),
+    # What a drop cuts is dropped to its end: an escape sequence (a paste
+    # marker included) or a character whose start was dropped
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (0.3, "1~"), (0.3, "ok")], None, "^[[200~X\a^[[201~ok", "an end marker cut by the pause still closes the paste"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (2.3, "1~"), (0.3, "ok")], BP_ON, "^[[200~X\a^[[201~ok", "an end marker cut by the bound still closes the paste"),
+    ("euc-jp-2007", [(0.0, "☃ x\x1b[20"), (0.3, "0~abc")], None, "\aabc", "a start marker cut by the pause isn't sent or counted"),
+    ("euc-jp-2007", [(0.0, "☃\x1b[1;5"), (0.3, "Hok")], None, "\aok", "an escape sequence cut by the pause isn't sent"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.3, " y\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\a y^[[201~ok", "after the bound, an end marker that partly went through is completed"),
 ]
 
 # Chinese, Korean, and single-byte encodings
@@ -391,8 +397,22 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
     os.close(slave)
     time.sleep(0.4)
     steps = text if isinstance(text, list) else [(0.0, text)]
+    # Each write at its time from the first, waiting for short delays
+    # without sleep(), which overshoots by tens of ms on some runners
+    # (macOS); max_gap is the longest time between two writes
+    due = last = time.monotonic()
+    max_gap = 0.0
     for delay, chunk in steps:
-        time.sleep(delay)
+        due += delay
+        while True:
+            left = due - time.monotonic()
+            if left <= 0:
+                break
+            if left > 0.05:
+                time.sleep(left - 0.05)
+        now = time.monotonic()
+        max_gap = max(max_gap, now - last)
+        last = now
         os.write(master, chunk.encode("utf-8"))
     out = b""
     end = time.time() + 1.2
@@ -423,7 +443,7 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
     if child_output is not None:
         got = got.replace(child_output, "", 1)
     if callable(expect):
-        return expect(got), f"got {got!r}"
+        return expect(got), f"got {got!r}, longest gap between writes {max_gap * 1000:.0f} ms"
     if got != expect:
         return False, f"{got!r} != expected {expect!r}"
     return True, f"round trip OK ({got!r})"
@@ -487,7 +507,7 @@ ENCODE_LAST_ARG_CASES = [
 ]
 
 
-def run_notify_case() -> tuple[bool, str]:
+def run_notify_case(text: str = "☃", expect_char: int = 0x2603) -> tuple[bool, str]:
     """-notify DIR: each rejected input is reported as one line,
     "unencodable <encoding> <pid> <hex code point>", to every Unix socket ("*.sock")
     in DIR (one per VS Code window; the window owning the terminal reacts)."""
@@ -506,7 +526,7 @@ def run_notify_case() -> tuple[bool, str]:
         got = []
         try:
             time.sleep(0.4)
-            os.write(fd, "☃".encode("utf-8"))
+            os.write(fd, text.encode("utf-8"))
             for server in servers:
                 conn, _ = server.accept()
                 conn.settimeout(3)
@@ -520,7 +540,7 @@ def run_notify_case() -> tuple[bool, str]:
             os.close(fd)
             for server in servers:
                 server.close()
-    expect = f"unencodable euc-jp-2007 {pid} 2603\n".encode()  # U+2603 ☃
+    expect = f"unencodable euc-jp-2007 {pid} {expect_char:X}\n".encode()
     return got == [expect, expect], f"{got!r}"
 
 
@@ -1110,6 +1130,13 @@ def main() -> int:
     total += 1
     ok, detail = run_notify_case()
     print(f"{'OK ' if ok else 'NG '}rejection reported to every socket -> {detail}")
+    if not ok:
+        failures += 1
+    total += 1
+    # two parts of one read rejected (a paste, then a character after its
+    # end): the paste's character is named
+    ok, detail = run_notify_case("\x1b[200~rm ☃\x1b[201~\U0001F389", 0x2603)
+    print(f"{'OK ' if ok else 'NG '}the first character that couldn't be encoded is named -> {detail}")
     if not ok:
         failures += 1
 

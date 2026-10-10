@@ -466,6 +466,61 @@ static int paste_open_whole = 0;
 /* a drop up to an end marker ended at the bound, with the shell not in
  * the paste: its end marker, when it comes, is left out */
 static int orphan_end = 0;
+/* a drop ended: the rest of a sequence (escape sequence or UTF-8
+ * character) it cut is dropped too, as lexInput() tells */
+static int skipping = 0;
+
+/* Where input is in an escape sequence or a UTF-8 character, followed over
+ * all of it, forwarded or not, so that the end of a drop can tell whether
+ * it cut one (luit's own parser doesn't follow CSI sequences) */
+static enum {
+    LEX_TEXT,
+    LEX_ESC,			/* after ESC */
+    LEX_CSI,			/* ESC [ ..., up to a final byte */
+    LEX_SS3,			/* ESC O, one more byte */
+    LEX_UTF8			/* lex_more continuation bytes to come */
+} lex = LEX_TEXT;
+static int lex_more = 0;
+
+static void
+lexInput(const unsigned char *buf, size_t n)
+{
+    size_t k;
+
+    for (k = 0; k < n; k++) {
+	unsigned char b = buf[k];
+
+	switch (lex) {
+	case LEX_ESC:
+	    lex = (b == '[') ? LEX_CSI : (b == 'O') ? LEX_SS3 : (b == ESC) ? LEX_ESC : LEX_TEXT;
+	    continue;
+	case LEX_CSI:
+	    if (b >= 0x20 && b <= 0x3F)
+		continue;	/* parameters and intermediates */
+	    lex = (b == ESC) ? LEX_ESC : LEX_TEXT;	/* a final byte, or cut */
+	    continue;
+	case LEX_SS3:
+	    lex = LEX_TEXT;
+	    continue;
+	case LEX_UTF8:
+	    if ((b & 0xC0) == 0x80) {
+		if (--lex_more == 0)
+		    lex = LEX_TEXT;
+		continue;
+	    }
+	    lex = LEX_TEXT;	/* cut: b starts something new */
+	    break;
+	case LEX_TEXT:
+	    break;
+	}
+	if (b == ESC) {
+	    lex = LEX_ESC;
+	} else if (b >= 0xC2 && b <= 0xF4) {
+	    lex = LEX_UTF8;
+	    lex_more = (b >= 0xF0) ? 3 : (b >= 0xE0) ? 2 : 1;
+	}
+    }
+}
 /* the last bytes of input, for a marker split across reads, and whether
  * each was forwarded */
 static unsigned char carry[PASTE_MARKER_LEN - 1];
@@ -480,7 +535,10 @@ static size_t carry_len = 0;
  * still reading the program's output, so neither side can deadlock.
  * copyIn() only runs once this is empty, and queues at most one chunk's
  * conversion and one end marker. */
-static unsigned char input_pending[CONVERTED_CHUNK_MAX + PASTE_MARKER_LEN];
+static unsigned char input_pending[INPUT_PENDING_MAX];
+/* INPUT_PENDING_MAX (iso2022.h) counts one end marker */
+typedef char input_pending_fits_marker[(INPUT_PENDING_MAX - CONVERTED_CHUNK_MAX
+					== PASTE_MARKER_LEN) ? 1 : -1];
 static size_t input_pending_len = 0;
 
 /* PATCH(fork, input rejection): the first character copyIn() couldn't
@@ -502,7 +560,7 @@ inputPending(void)
 }
 
 /* Moves all held-back input into dst, which has room for
- * CONVERTED_CHUNK_MAX bytes, and returns its length */
+ * INPUT_PENDING_MAX bytes, and returns its length */
 size_t
 takeInput(unsigned char *dst)
 {
@@ -628,8 +686,15 @@ followMarkers(const unsigned char *buf, size_t n, int *inside, int *whole)
 	if (streamByte(buf, k) != ESC)
 	    continue;
 	if (markerAt(buf, len, k, PASTE_START)) {
-	    *inside = 1;
-	    *whole = k >= carry_len && k + PASTE_MARKER_LEN <= len;
+	    size_t j;
+	    int all_sent = 1;
+
+	    for (j = k; j < carry_len; j++)
+		all_sent &= carry_sent[j];
+	    if (all_sent) {	/* else its start was dropped */
+		*inside = 1;
+		*whole = k >= carry_len;
+	    }
 	} else if (markerAt(buf, len, k, PASTE_END)) {
 	    *inside = 0;
 	}
@@ -648,14 +713,12 @@ closePaste(size_t sent)
 }
 
 static void
-endDrop(Iso2022Ptr is, int at_bound)
+endDrop(int at_bound)
 {
     if (at_bound && dropping == DROP_TO_END && !paste_open)
 	orphan_end = 1;
     dropping = DROP_NONE;
-    /* the dropped bytes weren't parsed */
-    is->parserState = P_NORMAL;
-    buffered_input_count = 0;
+    skipping = 1;
 }
 
 /* PATCH(fork, input rejection): follows the program turning bracketed
@@ -701,10 +764,10 @@ trackPasteMode(const unsigned char *buf, size_t n)
 	case OUT_ESC:
 	    if (b == 'c')
 		pasteModeOff();
-	    out_state = (b == '[') ? OUT_CSI : OUT_TEXT;
+	    out_state = (b == '[') ? OUT_CSI : (b == ESC) ? OUT_ESC : OUT_TEXT;
 	    break;
 	case OUT_CSI:
-	    out_state = (b == '?') ? OUT_PRIVATE : OUT_TEXT;
+	    out_state = (b == '?') ? OUT_PRIVATE : (b == ESC) ? OUT_ESC : OUT_TEXT;
 	    out_param = 0;
 	    out_has_2004 = 0;
 	    break;
@@ -739,6 +802,8 @@ resetPasteTracking(void)
     paste_open = 0;
     paste_open_whole = 0;
     orphan_end = 0;
+    skipping = 0;
+    lex = LEX_TEXT;
     carry_len = 0;
 }
 
@@ -1146,6 +1211,7 @@ InputResult
 copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 {
     int rejected = 0, forwarded = 0;
+    unsigned first_rejected = 0;
     size_t rest = (size_t) count;
 
     assert(count <= BUFFER_SIZE);
@@ -1153,43 +1219,66 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 
     while (rest > 0) {
 	size_t unit, at = 0, sent = 0;
-	int has_end = findEnd(buf, rest, &unit, &at, &sent);
-	int inside = paste_open, whole = paste_open_whole;
+	int has_end, inside, whole;
 
 	if (dropping != DROP_NONE && now - drop_started >= DROP_MAX_MILLIS)
-	    endDrop(is, 1);
+	    endDrop(1);
 	else if (dropping == DROP_TO_PAUSE && now - drop_last >= DROP_PAUSE_MILLIS)
-	    endDrop(is, 0);
+	    endDrop(0);
 
+	if (skipping) {
+	    /* the rest of what the drop cut */
+	    size_t k = 0;
+
+	    while (k < rest && lex != LEX_TEXT)
+		lexInput(buf + k++, 1);
+	    if (lex == LEX_TEXT) {
+		skipping = 0;
+		/* luit's parser didn't see the dropped bytes */
+		is->parserState = P_NORMAL;
+		buffered_input_count = 0;
+	    }
+	    if (findEnd(buf, k, &unit, &at, &sent)) {
+		closePaste(sent);	/* the cut sequence was an end marker */
+		orphan_end = 0;
+	    }
+	    keepCarry(buf, k, 0);
+	    buf += k;
+	    rest -= k;
+	    continue;
+	}
+
+	has_end = findEnd(buf, rest, &unit, &at, &sent);
+	inside = paste_open;
+	whole = paste_open_whole;
+	lexInput(buf, unit);
 	if (dropping != DROP_NONE) {
 	    drop_last = now;
 	    if (has_end) {
 		closePaste(sent);
 		if (dropping == DROP_TO_END)
-		    endDrop(is, 0);
+		    endDrop(0);
 	    }
 	    keepCarry(buf, unit, 0);
 	} else {
-	    unsigned char stripped[BUFFER_SIZE];
-	    unsigned char *conv = buf;
 	    size_t conv_len = unit;
 
 	    followMarkers(buf, unit, &inside, &whole);
 	    /* the end marker of a paste dropped up to the bound, which the
-	     * shell never got the start of (unless a new paste has started:
-	     * then this one is that paste's) */
-	    if (has_end && orphan_end && !paste_open && at + PASTE_MARKER_LEN > carry_len) {
-		int started = 0, dummy = 0;
-		followMarkers(buf, at > carry_len ? at - carry_len : 0, &started, &dummy);
-		if (!started) {
-		    size_t from = at > carry_len ? at - carry_len : 0;
-		    memcpy(stripped, buf, from);
-		    conv = stripped;
-		    conv_len = from;
-		}
+	     * shell never got the start of, unless a new paste has started
+	     * (then it's that one's) or part of it already went through */
+	    if (has_end && orphan_end && !paste_open && sent == 0
+		&& at >= carry_len) {
+		int started = 0, started_whole = 0;
+
+		followMarkers(buf, at - carry_len, &started, &started_whole);
+		if (!started)
+		    conv_len = at - carry_len;
 		orphan_end = 0;
 	    }
-	    if (convertUnit(is, conv, (int) conv_len)) {
+	    if (convertUnit(is, buf, (int) conv_len)) {
+		if (!rejected)
+		    first_rejected = input_unencodable_char;
 		rejected = 1;
 		if (has_end) {
 		    closePaste(sent);	/* the paste ends here: nothing to drop */
@@ -1208,7 +1297,11 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 	buf += unit;
 	rest -= unit;
     }
-    return rejected ? INPUT_REJECTED : forwarded ? INPUT_FORWARDED : INPUT_DROPPED;
+    if (rejected) {
+	input_unencodable_char = first_rejected;	/* the first, as named */
+	return INPUT_REJECTED;
+    }
+    return forwarded ? INPUT_FORWARDED : INPUT_DROPPED;
 }
 
 #define PAIR(a,b) ((unsigned) ((a) << 8) | (b))

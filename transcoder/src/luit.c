@@ -856,7 +856,7 @@ encodeLastArg(int argc, char **argv)
     arg = (unsigned char *) argv[argc - 1];
     len = strlen((char *) arg);
     chunks = (len + BUFFER_SIZE - 1) / BUFFER_SIZE;
-    encoded = malloc(chunks * CONVERTED_CHUNK_MAX + 1);
+    encoded = malloc(chunks * INPUT_PENDING_MAX + 1);
     if (encoded == NULL) {
 	perror("Couldn't convert the command line");
 	ExitFailure();

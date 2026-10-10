@@ -128,8 +128,11 @@ character the encoding can't represent is rejected as a whole, and the user
 gets a bell. Substituting `?` or dropping just that character would change the
 command the shell runs (`rm <emoji>*` becomes `rm ?*` / `rm *`). `copyIn()`
 converts each read into a buffer and only writes it if every character
-converted. A paste can arrive in several reads, and forwarding only its tail
-could run a different command, so what follows a rejection is dropped too:
+converted. Warning on stderr instead isn't an option either: the messages
+would be mixed into the terminal output.
+
+A paste can arrive in several reads, and forwarding only its tail could run
+a different command, so what follows a rejection is dropped too:
 
 - Inside a bracketed paste (`ESC [200~` ... `ESC [201~`), up to its end
   marker, however late the rest arrives.
@@ -140,9 +143,10 @@ could run a different command, so what follows a rejection is dropped too:
   connection), so without the bound a wrong guess would drop every later
   keystroke. A rest arriving later gets through: luit can't tell it from
   typing. Locally that doesn't happen: VS Code writes a paste to the pty at
-  once (on Linux, 300 KB arrived within 3 ms), and luit reads what it drops without
-  waiting for the shell. If the drop ended at the bound with the shell not
-  in the paste, the paste's end marker is left out when it comes.
+  once (on Linux, 300 KB arrived within 3 ms), and luit reads what it drops
+  without waiting for the shell. If the drop ended at the bound with the
+  shell not in the paste, the paste's end marker is left out when it comes,
+  unless part of it already went through (then it's completed).
 
 Dropping up to the end marker needs bracketed paste on, which luit follows
 in the program's output (`ESC [?2004h`, also combined as in
@@ -151,13 +155,14 @@ and a start marker that arrived whole in one read, as the terminal writes a
 paste: one typed key by key doesn't count. The end marker is recognized
 split across reads. A read is handled in parts ending at each end marker,
 so input after a paste's end in the same read is converted on its own: a
-character there that can't be encoded is rejected by itself. If the shell
-got the paste's start marker, it still gets the end marker (or the part of
-it it hasn't got), unless the program has turned bracketed paste off since. The paste state is
-reset after `-encode-last-arg` converts a task's command line.
-Warning on stderr
-instead isn't an option either: the messages would be mixed into the
-terminal output.
+character there that can't be encoded is rejected by itself (the
+notification still names the first one). What a drop cuts is dropped to its
+end: an escape sequence (a paste marker included) or a UTF-8 character
+whose start was dropped, followed over all input since luit's own parser
+doesn't follow CSI sequences. If the shell got the paste's start marker, it
+still gets the end marker (or the part of it it hasn't got), unless the
+program has turned bracketed paste off since. The paste state is reset
+after `-encode-last-arg` converts a task's command line.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a
