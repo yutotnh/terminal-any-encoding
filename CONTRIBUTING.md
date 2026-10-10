@@ -65,6 +65,26 @@ bash transcoder/scripts/build.sh --musl
 python3 tests/test_encodings.py
 python3 tests/test_editor_parity.py
 
+# Checks CI also runs on the transcoder (see scripts/build.sh and
+# scripts/check-sanitizer-reports.sh): compiler warnings beyond upstream's
+# known ones fail the build, and the tests under AddressSanitizer, UBSan
+# and LeakSanitizer (Linux) must leave no report. On kernels with high mmap
+# randomization (e.g. Ubuntu 24.04), ASan needs
+# `sudo sysctl -w vm.mmap_rnd_bits=28` first. Rebuild without --sanitize
+# afterwards: the tests and transcoder/bin take src/luit.
+bash transcoder/scripts/build.sh --warnings --leak-check
+bash transcoder/scripts/build.sh --warnings
+reports="$(mktemp -d)"
+(
+  export ASAN_OPTIONS="detect_leaks=1:log_path=$reports/asan"
+  export UBSAN_OPTIONS="print_stacktrace=1:log_path=$reports/ubsan"
+  bash transcoder/scripts/build.sh --sanitize
+  python3 tests/test_encodings.py
+  python3 tests/test_editor_parity.py
+)
+bash transcoder/scripts/check-sanitizer-reports.sh "$reports"
+bash transcoder/scripts/build.sh
+
 # Reproducibility check for the conversion tables
 python3 tools/gen-tables/gen_tables.py --check
 ```

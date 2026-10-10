@@ -193,8 +193,11 @@ in the reverse index. Each table in `converters.json` can have an
 `input_aliases` array, and `gen_tables.py` puts those rows before the base
 rows: the base row still decides what's displayed, and the alias only adds a
 character that's sent as those bytes, e.g. U+301C → EUC `A1C1` in
-`jisx0208-2007-0`. luit itself is untouched. Whether a row is used for
-encoding is decided like for any other row (next section).
+`jisx0208-2007-0`. luit's only change for this is in
+`initializeBuiltInTable()`, which frees the earlier row's text when a later
+row for the same `source` replaces it (upstream's tables have one row per
+`source`, so it never needed to). Whether a row is used for encoding is
+decided like for any other row (next section).
 
 ## Which bytes a character is sent as
 
@@ -273,8 +276,45 @@ is whatever started luit (VS Code). Tests check the tree, resizing, closing
 the outer terminal and the exit status, on glibc and musl builds and on
 macOS.
 
+## Builds for checking: warnings and sanitizers
+
+CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
+
+- `--warnings` turns on configure's warnings (`-Wconversion`, `-Wshadow`
+  and so on) and fails on any warning except the few in upstream's code,
+  which stay as upstream has them so the fork's diff is only its own
+  changes. Those are listed in `KNOWN_WARNINGS` by file, flag and the
+  source line the compiler quotes after the warning (gcc and clang both
+  do), so an entry holds wherever the line moves and with either compiler,
+  and a warning of the same kind elsewhere in the file still counts. The
+  quoted line follows its warning only if the compilers' output isn't
+  interleaved, so this build keeps each one's output together (GNU make's
+  `--output-sync`, or serially where make lacks it).
+- `--sanitize` runs the tests under AddressSanitizer, UBSan and
+  LeakSanitizer. It builds with configure's `--disable-leaks` (also on its
+  own as `--leak-check`), under which luit frees its permanent memory at
+  exit, so that only real leaks are reported. The fork's own permanent
+  allocations are freed there too (`luit_leaks()`: the argument copies of
+  `claimTitleArea()` and `expandArgsFromEnv()`, the converted task command
+  line), and `luit_leaks()` skips the input and output states if creating
+  them failed, rather than crashing on the way out. `--sanitize` also
+  configures with `--enable-warnings`, for the attributes it defines
+  (`noreturn` on `ExitProgram()` and so on): LeakSanitizer takes any pointer
+  it finds in memory as a reference, and without them a stale pointer on
+  `main()`'s stack hid a leak. That makes such misses less likely, not
+  impossible. Reports go to files, as luit's stderr is the terminal, and the
+  converter luit detaches writes its report when it exits, possibly after
+  the tests return, so `scripts/check-sanitizer-reports.sh` waits for it.
+  Warnings aren't checked in this build (gcc warns more falsely with
+  sanitizers); the native job checks the `--leak-check` code instead.
+
 ## Known upstream bugs and fixes
 
+- Not fixed yet: loading a table in `luitconv.c` doesn't check its
+  allocations (`newLuitConv()`'s arrays, the encoding name, each row's
+  text), so running out of memory then crashes luit, also mid-session when
+  a program designates a charset not loaded yet. A fix has to cover all of
+  them at once and leave no half-made table behind.
 - `allocatePty()` in `sys.c`, `openpty()` path: `openpty()` also opens the
   slave side, and only the child closed it (in `openTty()`). The parent
   kept it open, so the master never saw EOF/EIO when the shell exited and

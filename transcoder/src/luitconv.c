@@ -790,6 +790,11 @@ initializeBuiltInTable(LuitConv * data,
 	    if ((need = (size_t) ConvToUTF8(buffer,
 					    data->table_utf8[j].ucs,
 					    sizeof(buffer) - 1)) != 0) {
+		/* PATCH(fork, builtin tables): a fork-generated table can have
+		 * several rows for a source (input aliases come before the
+		 * row that decodes it; see gen_tables.py), and the last one
+		 * keeps the text */
+		free(data->table_utf8[j].text);
 		data->table_utf8[j].text = malloc(need + 1);
 		data->table_utf8[j].size = need;
 		memcpy(data->table_utf8[j].text, buffer, need);

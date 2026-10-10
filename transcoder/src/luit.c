@@ -59,10 +59,22 @@ static const char *locale_name = NULL;
 static const char *notify_path = NULL;
 /* PATCH(fork, title): see claimTitleArea() and updateTitle() */
 static const char *title_suffix = NULL;
+#ifdef __linux__			/* the title only follows the program there */
 static char *title_area = NULL;
 static size_t title_area_len = 0;
-/* PATCH(fork, task command line): see encodeLastArg() */
+/* The arguments, moved out of title_area: the array main() goes on with,
+ * whose elements may be replaced (encodeLastArg()), and the strings */
+static char **title_argv = NULL;
+static char **title_strings = NULL;
+#endif
+/* PATCH(fork, shell shim): the arguments expandArgsFromEnv() makes, and
+ * the copy of the variable they point into, kept for luit_leaks() */
+static char **env_args = NULL;
+static char *env_args_text = NULL;
+/* PATCH(fork, task command line): see encodeLastArg(); encoded_arg is the
+ * converted argument, kept for luit_leaks() to free */
 static int encode_last_arg = 0;
+static unsigned char *encoded_arg = NULL;
 /* PATCH(fork, inverted tree): the shell's pid, which VS Code knows this
  * terminal by, when the process tree is inverted (see condomInverted);
  * 0 in the classic layout, where that pid is luit's own */
@@ -632,6 +644,7 @@ claimTitleArea(int *argcp, char ***argvp)
 {
 #ifdef __linux__
     char **copy;
+    char **strings;
     char *end;
     int k;
 
@@ -644,15 +657,27 @@ claimTitleArea(int *argcp, char ***argvp)
 	end += strlen((*argvp)[k]) + 1;
     }
     copy = (char **) calloc((size_t) *argcp + 1, sizeof(char *));
-    if (copy == NULL)
+    strings = (char **) calloc((size_t) *argcp + 1, sizeof(char *));
+    if (copy == NULL || strings == NULL) {
+	free(copy);
+	free(strings);
 	return;
+    }
     for (k = 0; k < *argcp; k++) {
-	copy[k] = strmalloc((*argvp)[k]);
-	if (copy[k] == NULL)
+	strings[k] = strmalloc((*argvp)[k]);
+	if (strings[k] == NULL) {
+	    while (k-- > 0)
+		free(strings[k]);
+	    free(strings);
+	    free(copy);
 	    return;
+	}
+	copy[k] = strings[k];
     }
     title_area = (*argvp)[0];
     title_area_len = (size_t) (end - title_area);
+    title_argv = copy;
+    title_strings = strings;
     *argvp = copy;
     /* Started through a link named like the shell (see expandArgsFromEnv),
      * luit's command name would be "bash": `pgrep bash`/`killall bash`
@@ -784,8 +809,12 @@ expandArgsFromEnv(int *argcp, char ***argvp)
 	    count++;
     count++;
     args = (char **) calloc((size_t) (count + *argcp + 1), sizeof(char *));
-    if (args == NULL)
+    if (args == NULL) {
+	free(copy);
 	return;
+    }
+    env_args = args;
+    env_args_text = copy;
     args[n++] = (*argvp)[0];
     for (p = copy; p != NULL;) {
 	char *next = strchr(p, '\n');
@@ -843,6 +872,7 @@ encodeLastArg(int argc, char **argv)
 	done += n;
     }
     encoded[size] = '\0';
+    encoded_arg = encoded;
     argv[argc - 1] = (char *) encoded;
 }
 
@@ -1391,7 +1421,7 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	ExitFailure();
     }
     if (helper == 0) {
-	pid_t converter;
+	pid_t converter_pid;
 	/* Out of the shell's process group before the shell can exist: the
 	 * shell takes the inner pty with its group as the foreground one,
 	 * and when it exits (a session leader), that group gets SIGHUP. A
@@ -1399,9 +1429,9 @@ condomInverted(int sfd, int pty, char *line, char *path, char **child_argv)
 	 * would die before reading anything, so a command that printed and
 	 * exited at once would show nothing. */
 	(void) setsid();
-	converter = fork();
-	if (converter != 0)
-	    _exit(converter < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
+	converter_pid = fork();
+	if (converter_pid != 0)
+	    _exit(converter_pid < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
 	/* the converter, now an orphan: takes the outer terminal, which
 	 * nobody has now, to get its SIGWINCH and SIGHUP */
 	(void) setsid();
@@ -1492,7 +1522,28 @@ condom(int argc, char **argv)
 void
 luit_leaks(void)
 {
-    destroyIso2022(inputState);
-    destroyIso2022(outputState);
+    /* PATCH(fork, leak check): NULL when creating them failed, on the way
+     * out through FatalError() */
+    if (inputState != NULL)
+	destroyIso2022(inputState);
+    if (outputState != NULL)
+	destroyIso2022(outputState);
+#ifdef __linux__
+    if (title_strings != NULL) {	/* PATCH(fork, title) */
+	char **p;
+	for (p = title_strings; *p != NULL; p++)
+	    free(*p);
+	free(title_strings);
+	free(title_argv);
+	title_strings = NULL;
+	title_argv = NULL;
+    }
+#endif
+    free(encoded_arg);		/* PATCH(fork, task command line) */
+    encoded_arg = NULL;
+    free(env_args);		/* PATCH(fork, shell shim) */
+    free(env_args_text);
+    env_args = NULL;
+    env_args_text = NULL;
 }
 #endif
