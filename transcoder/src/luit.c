@@ -67,6 +67,10 @@ static size_t title_area_len = 0;
 static char **title_argv = NULL;
 static char **title_strings = NULL;
 #endif
+/* PATCH(fork, shell shim): the arguments expandArgsFromEnv() makes, and
+ * the copy of the variable they point into, kept for luit_leaks() */
+static char **env_args = NULL;
+static char *env_args_text = NULL;
 /* PATCH(fork, task command line): see encodeLastArg(); encoded_arg is the
  * converted argument, kept for luit_leaks() to free */
 static int encode_last_arg = 0;
@@ -805,8 +809,12 @@ expandArgsFromEnv(int *argcp, char ***argvp)
 	    count++;
     count++;
     args = (char **) calloc((size_t) (count + *argcp + 1), sizeof(char *));
-    if (args == NULL)
+    if (args == NULL) {
+	free(copy);
 	return;
+    }
+    env_args = args;
+    env_args_text = copy;
     args[n++] = (*argvp)[0];
     for (p = copy; p != NULL;) {
 	char *next = strchr(p, '\n');
@@ -1514,8 +1522,12 @@ condom(int argc, char **argv)
 void
 luit_leaks(void)
 {
-    destroyIso2022(inputState);
-    destroyIso2022(outputState);
+    /* PATCH(fork, leak check): NULL when creating them failed, on the way
+     * out through FatalError() */
+    if (inputState != NULL)
+	destroyIso2022(inputState);
+    if (outputState != NULL)
+	destroyIso2022(outputState);
 #ifdef __linux__
     if (title_strings != NULL) {	/* PATCH(fork, title) */
 	char **p;
@@ -1529,5 +1541,9 @@ luit_leaks(void)
 #endif
     free(encoded_arg);		/* PATCH(fork, task command line) */
     encoded_arg = NULL;
+    free(env_args);		/* PATCH(fork, shell shim) */
+    free(env_args_text);
+    env_args = NULL;
+    env_args_text = NULL;
 }
 #endif

@@ -796,11 +796,16 @@ initializeBuiltInTable(LuitConv * data,
 		 * keeps the text */
 		free(data->table_utf8[j].text);
 		data->table_utf8[j].text = malloc(need + 1);
-		data->table_utf8[j].size = 0;
-		if (data->table_utf8[j].text != NULL) {	/* else: no row */
-		    data->table_utf8[j].size = need;
-		    memcpy(data->table_utf8[j].text, buffer, need);
+		/* PATCH(fork, builtin tables): upstream wrote through the
+		 * pointer unchecked. Nothing undoes a half-made table, and
+		 * luit can't run without its tables, so it stops. */
+		if (data->table_utf8[j].text == NULL) {
+		    fprintf(stderr, "luit: out of memory loading %s\n",
+			    NonNull(builtIn->name));
+		    ExitFailure();
 		}
+		data->table_utf8[j].size = need;
+		memcpy(data->table_utf8[j].text, buffer, need);
 	    }
 
 	    trace_convert(data, j, 0);
