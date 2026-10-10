@@ -70,9 +70,22 @@ setUp(int bracketed)
     bells = 0;
 }
 
-/* Feeds the reads as luit's parent() does: held input (an ESC that may
- * start a paste marker) is passed on once it has been held for HOLD_MILLIS
- * with nothing more come */
+/* Lets the time pass up to `until` as luit's parent() does: while input
+ * is held, it wakes every HOLD_MILLIS + 1 to pass it on if it's been held
+ * long enough (flushHeldInput()) */
+static void
+waitUntil(double *now, double until)
+{
+    while (inputHeld() && *now + HOLD_MILLIS + 1 <= until) {
+	*now += HOLD_MILLIS + 1;
+	if (flushHeldInput(input_state, *now))
+	    shell_len += takeInput(shell + shell_len);
+    }
+    *now = until;
+}
+
+/* Feeds the reads as luit's parent() does, and lets the time pass after
+ * the last one for whatever is still held */
 static void
 feed(Read *reads, int n)
 {
@@ -81,19 +94,15 @@ feed(Read *reads, int n)
 
     for (k = 0; k < n; k++) {
 	size_t len = strlen(reads[k].bytes);
-	if (inputHeld() && reads[k].delay >= HOLD_MILLIS) {
-	    (void) flushHeldInput(input_state, now + HOLD_MILLIS);
-	    shell_len += takeInput(shell + shell_len);
-	}
-	now += reads[k].delay;
+
+	waitUntil(&now, now + reads[k].delay);
 	if (len == 0)
 	    continue;
 	if (copyIn(input_state, (unsigned char *) reads[k].bytes, (int) len, now))
 	    bells++;
 	shell_len += takeInput(shell + shell_len);
     }
-    if (flushHeldInput(input_state, now + HOLD_MILLIS))
-	shell_len += takeInput(shell + shell_len);
+    waitUntil(&now, now + 2 * BOUND);
 }
 
 static void
@@ -134,10 +143,10 @@ fail(const char *rule, const char *what, const Read *reads, int n)
 }
 
 /* The rules every scenario must keep: markers whole and in order (unless
- * markers_kept is 0), the shell out of any paste at the end, and the last
- * "ok" there */
+ * markers_kept is 0), the shell out of any paste at the end (unless
+ * closed_kept is 0), and the last "ok" there */
 static int
-checkShell(const char *what, const Read *reads, int n, int markers_kept)
+checkShell(const char *what, const Read *reads, int n, int markers_kept, int closed_kept)
 {
     size_t i;
     int inside = 0;
@@ -181,7 +190,7 @@ checkShell(const char *what, const Read *reads, int n, int markers_kept)
 	    return 0;
 	}
     }
-    if (inside) {
+    if (inside && closed_kept) {
 	fail("shell out of the paste at the end", what, reads, n);
 	return 0;
     }
@@ -270,10 +279,14 @@ rejectedPastes(void)
 			 * a lone ESC that nothing follows for HOLD_MILLIS
 			 * outside a paste is an Escape key (the start marker
 			 * cut after its ESC), and what comes after the bound
-			 * goes through as it is */
+			 * goes through as it is. A start marker cut by the
+			 * bound goes through as text, and the shell may take
+			 * it with what comes later for one, while its end was
+			 * in the rejected read: it may stay in that paste */
 			if (!checkShell(what, reads, n,
 					!(c1 == 1 && GAPS[g1] >= HOLD_MILLIS)
-					&& GAPS[g1] < BOUND && GAPS[g2] < BOUND))
+					&& GAPS[g1] < BOUND && GAPS[g2] < BOUND,
+					!(c1 >= 1 && c1 <= 5 && GAPS[g1] >= BOUND)))
 			    continue;
 			if (bells != 1) {
 			    fail("one bell", what, reads, n);
@@ -350,7 +363,7 @@ endCutTwice(void)
 			setUp(bracketed);
 			feed(reads, n);
 			(void) checkShell(what, reads, n,
-					  GAPS[g1] + GAPS[g2] < BOUND);
+					  GAPS[g1] + GAPS[g2] < BOUND, 1);
 		    }
 		}
 	    }
@@ -387,7 +400,7 @@ startForwardedPart(void)
 		scenarios++;
 		setUp(bracketed);
 		feed(reads, n);
-		(void) checkShell(what, reads, n, GAPS[g] < BOUND);
+		(void) checkShell(what, reads, n, GAPS[g] < BOUND, 1);
 	    }
 	}
     }
@@ -433,7 +446,7 @@ pasteAfterBound(void)
 		feed(reads, n);
 		/* the first paste's rest comes after the bound: markers are
 		 * checked from the second paste on (see below) */
-		if (!checkShell(what, reads, n, 0))
+		if (!checkShell(what, reads, n, 0, 1))
 		    continue;
 		if (!strstr((char *) shell, START "uv" END) && shell_len < sizeof(shell)) {
 		    shell[shell_len] = '\0';

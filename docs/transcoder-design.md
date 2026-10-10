@@ -161,12 +161,12 @@ and the bound), for rejected reads with other escapes in them, and for
 every way input with nothing rejected can be cut into two or three reads,
 with the time faked:
 
-- The shell never gets part of a marker: it gets a start marker unless
-  it's dropped, and an end marker unless the paste's start was (the end of
-  a paste whose start went through as text, cut after its ESC, goes
-  through too: the shell may have taken that start for one). So a
-  start marker goes through even when what follows it is rejected, and the
-  shell gets an empty paste.
+- The shell never gets part of a marker: it gets a start marker unless it's
+  dropped, and an end marker unless the paste's start was (the end of a
+  paste whose start went through as text, cut for 10 ms after its ESC or for
+  2 s later, goes through too: the shell may have taken that start for one).
+  So a start marker goes through even when what follows it is rejected, and
+  the shell gets an empty paste.
 - With nothing rejected, the shell gets the same bytes however the input
   is cut into reads and however long between them: those of the whole
   input converted at once, as a task's command line is.
@@ -184,14 +184,19 @@ with the time faked:
   left open before it (an Escape key right before a paste).
 
 A lone ESC is what the Escape key sends, so one held at the end of a read
-goes on as a key after 10 ms if nothing follows; more of a marker
-(`ESC [` ...) is held for 2 s at most, as no key sends it alone. Inside a
-paste what's held waits for what comes next (in a paste the shell didn't
-get the start of, for 2 s at most): it's most likely the start of the end
-marker, which the terminal always sends, and passing it on as text would
-leave the shell in the paste. An ESC that nothing follows for 10 ms
-outside a paste is taken for a key, so a start marker split right after its
-ESC by that long isn't one: luit can't tell the two apart. A task's
+goes on as a key after 10 ms if nothing follows; more of a marker (`ESC [`
+...) is held for 2 s at most, as no key sends it alone. Inside a paste
+what's held waits for what comes next (in a paste the shell didn't get the
+start of, for 2 s at most): it's most likely the start of the end marker,
+which the terminal always sends, and passing it on as text would leave the
+shell in the paste. An ESC that nothing follows for 10 ms outside a paste is
+taken for a key, so a start marker split right after its ESC by that long
+isn't one: luit can't tell the two apart. If the rest of that paste is then
+rejected, the shell gets the ESC and the end marker only. A start marker
+split for longer than 2 s goes through as text too, and the shell may take
+it with what comes later for one; if the rest of that paste is rejected, its
+end marker is dropped with it, and the shell can stay in the paste. Locally
+neither happens, as VS Code writes a paste to the pty at once. A task's
 command line (`-encode-last-arg`) isn't keyboard input: it's converted
 without any of this, its escapes and markers passed on as they are, and
 leaves the paste state alone.

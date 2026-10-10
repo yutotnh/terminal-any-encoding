@@ -130,6 +130,8 @@ INPUT_REJECTION_SEQUENCE_CASES = [
      "a paste right after an Escape key arrives as it is"),
     ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "[200~abc\x1b[201~"), (0.3, "ok")], BP_ON, "^[[200~abc^[[201~ok",
      "a paste whose start marker is cut after its ESC still gets its end marker"),
+    ("euc-jp-2007", [(0.0, "\x1b[20"), (2.3, "0~abc\x1b[201~"), (0.3, "ok")], BP_ON, "^[[200~abc^[[201~ok",
+     "a start marker cut for longer than 2 s goes through as text, its end too"),
     ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
 ]
 
