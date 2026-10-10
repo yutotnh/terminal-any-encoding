@@ -106,7 +106,7 @@ BP_ON = "\x1b[?2004h"
 
 def _a_after_cap(got: str) -> bool:
     """The bell, then some of the a's: those after the 2 s bound"""
-    return got.startswith("\a") and 5 <= got.count("a") < 75
+    return got.startswith("\a") and 5 <= got.count("a") < 300
 
 
 INPUT_REJECTION_SEQUENCE_CASES = [
@@ -132,8 +132,9 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\x1b[?1049;2004h", "\aok", "bracketed paste turned on in a combined sequence"),
     ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\aok", "a terminal reset turns bracketed paste off"),
     # The 50 ms pause can't be held open beyond the bound by input that
-    # keeps coming (a key held down after a rejection)
-    ("euc-jp-2007", [(0.0, "☃")] + [(0.04, "a")] * 75, None, _a_after_cap, "input that keeps coming is held back for 2 s at most"),
+    # keeps coming (a key held down after a rejection). 10 ms apart, well
+    # inside the pause even where sleeps overshoot (macOS)
+    ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "a")] * 300, None, _a_after_cap, "input that keeps coming is held back for 2 s at most"),
 ]
 
 # Chinese, Korean, and single-byte encodings
