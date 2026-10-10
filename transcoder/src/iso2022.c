@@ -1169,6 +1169,27 @@ flushHeldInput(Iso2022Ptr is, double now)
     return 1;
 }
 
+/* PATCH(fork, input rejection): the clock of copyIn() and flushHeldInput():
+ * `now` less the time input waited for the pty to take what was converted
+ * before, so the rest of a paste waiting for a busy program isn't late.
+ * parent() in luit.c passes the time through here whenever that wait may
+ * have started or ended. */
+static double input_waited = 0.0;
+static double input_waiting_since = -1.0;
+
+double
+inputClock(double now)
+{
+    if (input_pending_len > 0) {
+	if (input_waiting_since < 0.0)
+	    input_waiting_since = now;
+    } else if (input_waiting_since >= 0.0) {
+	input_waited += now - input_waiting_since;
+	input_waiting_since = -1.0;
+    }
+    return now - input_waited;
+}
+
 /*
  * PATCH(fork, input rejection): converts one chunk of keyboard input and
  * queues it (flushInput() writes it, takeInput() hands it over), `now`

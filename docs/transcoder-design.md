@@ -146,7 +146,8 @@ a different command, so what follows a rejection is dropped too:
   once (on Linux, 300 KB arrived within 3 ms), and luit reads what it drops
   without waiting for the shell. The clock stops while luit waits for a
   busy program to take what it converted before, so a rest waiting behind
-  that isn't late.
+  that isn't late (`tests/paste_driver.c` checks it with a pty that takes
+  nothing for longer than the bound).
 
 Dropping up to the end marker needs bracketed paste on, which luit follows
 in the program's output (`ESC [?2004h`, also combined as in

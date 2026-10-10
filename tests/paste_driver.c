@@ -708,6 +708,71 @@ heldKey(void)
 	fail("a held key is dropped for the bound", "held key", reads, 3);
 }
 
+/* Feeds one read at `now` as luit's parent() does, the time passed
+ * through inputClock() */
+static void
+readAt(const char *bytes, double now)
+{
+    if (copyIn(input_state, (unsigned char *) bytes, (int) strlen(bytes), inputClock(now)))
+	bells++;
+}
+
+/*
+ * A rejected paste whose start marker the pty doesn't take for longer than
+ * the bound, as from a busy program, then its rest, right after the pty
+ * takes the marker or the bound after that, with the time passed through
+ * inputClock() as luit's parent() does: the clock stops while input waits
+ * for the pty, so only the rest after the bound goes through. With the
+ * marker taken at once, the rest as late goes through either way.
+ */
+static void
+blockedPty(void)
+{
+    static const double afters[] = { 0.0, BOUND + 100.0 };
+    const double wait = BOUND + 500.0;
+    int bracketed, blocked, a;
+
+    for (bracketed = 0; bracketed <= 1; bracketed++) {
+	for (blocked = 0; blocked <= 1; blocked++) {
+	    for (a = 0; a < (int) (sizeof(afters) / sizeof(afters[0])); a++) {
+		Read reads[3];
+		char what[96];
+		double now = 10000.0;
+		const char *expect = (blocked && afters[a] < BOUND)
+		    ? START END "ok" : START "rs" END "ok";
+
+		reads[0].delay = 0.0;
+		strcpy(reads[0].bytes, START "pq" SNOWMAN);
+		reads[1].delay = wait + afters[a];
+		strcpy(reads[1].bytes, "rs" END);
+		reads[2].delay = BOUND + 100.0;
+		strcpy(reads[2].bytes, "ok");
+		snprintf(what, sizeof(what), "bracketed %s, pty %s, rest %.0f after",
+			 bracketed ? "on" : "off",
+			 blocked ? "busy for 2500" : "taking input", afters[a]);
+		scenarios++;
+		setUp(bracketed);
+		readAt(reads[0].bytes, now);
+		/* the start marker passed on waits for the pty, or doesn't */
+		if (!blocked)
+		    shell_len += takeInput(shell + shell_len);
+		(void) inputClock(now);
+		now += wait;
+		shell_len += takeInput(shell + shell_len);
+		(void) inputClock(now);
+		readAt(reads[1].bytes, now += afters[a]);
+		shell_len += takeInput(shell + shell_len);
+		readAt(reads[2].bytes, now += reads[2].delay);
+		shell_len += takeInput(shell + shell_len);
+		if (shell_len != strlen(expect) || memcmp(shell, expect, shell_len))
+		    fail("the drop's clock stops while the pty takes nothing", what, reads, 3);
+		else if (bells != 1)
+		    fail("one bell", what, reads, 3);
+	    }
+	}
+    }
+}
+
 int
 main(void)
 {
@@ -721,6 +786,7 @@ main(void)
     escapeBeforeMarker();
     unrejectedSplits();
     heldKey();
+    blockedPty();
     printf("%d of %d scenarios kept every rule\n", scenarios - failures, scenarios);
     return failures ? 1 : 0;
 }
