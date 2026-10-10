@@ -273,8 +273,41 @@ is whatever started luit (VS Code). Tests check the tree, resizing, closing
 the outer terminal and the exit status, on glibc and musl builds and on
 macOS.
 
+## Builds for checking: warnings and sanitizers
+
+CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
+
+- `--warnings` turns on configure's warnings (`-Wconversion`, `-Wshadow`
+  and so on) and fails on any warning except the few in upstream's code,
+  which stay as upstream has them so the fork's diff is only its own
+  changes. Those are listed in `KNOWN_WARNINGS` by file, flag and the
+  source line the compiler quotes after the warning (gcc and clang both
+  do), so an entry holds wherever the line moves and with either compiler,
+  and a warning of the same kind elsewhere in the file still counts. The
+  quoted line follows its warning only when one compiler writes at a time,
+  so this build is serial.
+- `--sanitize` runs the tests under AddressSanitizer, UBSan and
+  LeakSanitizer. It builds with configure's `--disable-leaks` (also on its
+  own as `--leak-check`), under which luit frees its permanent memory at
+  exit, so that only real leaks are reported. The fork's own permanent
+  allocations are freed there too (`luit_leaks()`: the argument copies of
+  `claimTitleArea()` and `expandArgsFromEnv()`, the converted task command
+  line), and `luit_leaks()` skips the input and output states if creating
+  them failed, rather than crashing on the way out. `--sanitize` also
+  configures with `--enable-warnings`, for the attributes it defines
+  (`noreturn` on `ExitProgram()` and so on): LeakSanitizer takes any pointer
+  it finds in memory as a reference, and without them a stale pointer on
+  `main()`'s stack hid a leak. Reports go to files, as luit's stderr is the terminal, and the
+  converter luit detaches writes its report when it exits, possibly after
+  the tests return, so `scripts/check-sanitizer-reports.sh` waits for it.
+  Warnings aren't checked in this build (gcc warns more falsely with
+  sanitizers); the native job checks the `--leak-check` code instead.
+
 ## Known upstream bugs and fixes
 
+- `initializeBuiltInTable()` in `luitconv.c` wrote each row's text through
+  `malloc()`'s result unchecked. luit now stops with a message: nothing
+  undoes a half-made table, and luit can't run without its tables.
 - `allocatePty()` in `sys.c`, `openpty()` path: `openpty()` also opens the
   slave side, and only the child closed it (in `openTty()`). The parent
   kept it open, so the master never saw EOF/EIO when the shell exited and
