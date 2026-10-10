@@ -834,9 +834,7 @@ encodeLastArg(int argc, char **argv)
     }
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	/* No output has turned bracketed paste on yet, so the command line
-	 * leaves the paste state alone */
-	if (copyIn(inputState, arg + done, (int) n, 0) != INPUT_FORWARDED) {
+	if (copyIn(inputState, arg + done, (int) n, 0)) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
@@ -1175,11 +1173,9 @@ notifyRejected(void)
 }
 
 /* PATCH(fork, input rejection): how long input keeps being dropped after a
- * rejection, measured from the last dropped read. For a paste without
- * bracketed paste markers (with them, copyIn() drops up to the end marker
- * instead), nothing else tells its rest from what's typed next: long
- * enough to cover a paste arriving in several reads, short enough not to
- * eat the next keystroke typed by hand. */
+ * rejection, measured from the last dropped read. Long enough to cover a
+ * paste arriving in several reads, short enough not to eat the next
+ * keystroke typed by hand. */
 #define REJECT_QUIET_MILLIS 50.0
 
 /* PATCH(fork, title): VS Code re-reads the tab title every 200 ms, output
@@ -1269,12 +1265,12 @@ parent(int sfd, int pty)
 		     * than the one pasted. */
 		    double now = monotonicMillis();
 		    int discard = now < reject_until;
-		    InputResult result = copyIn(inputState, buf, i, discard);
-		    if (result == INPUT_REJECTED) {
+		    int rejected = copyIn(inputState, buf, i, discard);
+		    if (rejected && !discard) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
-		    if (result != INPUT_FORWARDED)
+		    if (discard || rejected)
 			reject_until = now + REJECT_QUIET_MILLIS;
 		    if (flushInput(pty, 0) < 0)
 			break;

@@ -91,25 +91,14 @@ FALLBACK_INPUT_CASES = [
     ("GBK", "A☃B", None, "\a", "OTHER charset path (other_fork.c) rejects too"),
 ]
 
-# Input arriving in several reads after a rejection (a paste) is dropped,
-# so the paste's tail alone can never reach the shell: up to the end marker
-# of a bracketed paste, however late it comes, or else until input pauses.
-# The next input after that goes through. An open bracketed paste is still
-# closed. Paste markers count only while the program has bracketed paste
-# on, and a start marker only when it arrives whole, as the terminal sends
-# it. (encoding, [(delay before write, text)], bracketed paste on,
-# expected, description; the inner tty echoes ESC as ^[)
+# Input arriving in several reads after a rejection (a paste) is dropped
+# until input pauses, so only the paste's tail can never reach the shell;
+# the next input after the pause goes through. An open bracketed paste is
+# still closed. (encoding, [(delay before write, text)], expected, description)
 INPUT_REJECTION_SEQUENCE_CASES = [
-    ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], False, "\a", "the rest of a split paste is dropped too"),
-    ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], False, "\aok", "input after a pause goes through again"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], True, "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], True, "\aok", "the rest of a bracketed paste is dropped up to its end marker, however late"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[20"), (0.3, "1~"), (0.3, "ok")], True, "\aok", "an end marker split across reads still ends the paste"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ -rf"), (0.3, " x\x1b[201~")], True, "^[[200~X\a^[[201~", "an open paste rejected in the middle is dropped and closed at its end marker"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, " y\x1b[20"), (0.3, "1~☃")], True, "^[[200~X y^[[20\a1~", "an end marker whose first half went through is completed, not sent again"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], False, "\aok", "with bracketed paste off, a start marker in input doesn't hold input back"),
-    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")], True,
-     "^[[200~\aok", "a start marker typed key by key doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], "\a", "the rest of a split paste is dropped too"),
+    ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], "\aok", "input after a pause goes through again"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste (the inner tty echoes ESC as ^[)"),
 ]
 
 # Chinese, Korean, and single-byte encodings
@@ -341,26 +330,19 @@ def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect: str
     return True, repr(text)
 
 
-PASTE_MODE_ON = "\x1b[?2004h"
-
-
-def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None, expect: str,
-                            paste_mode: bool = False) -> tuple[bool, str]:
+def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None, expect: str) -> tuple[bool, str]:
     """Launches luit on a raw-mode PTY and confirms via round trip the byte
     sequence the child (cat) actually received. The head -c approach was
     unstable due to shell startup timing in this environment, so this uses a
     subprocess approach where tty.setraw() fully raw-mode's the outer PTY
     instead (with ICANON left on, input
     got buffered until a newline, and unmapped-character fallback couldn't
-    be verified correctly). With paste_mode, the child first turns
-    bracketed paste on, as a shell does, which luit follows (the sequence
-    isn't part of what's compared).
+    be verified correctly).
     """
     master, slave = pty.openpty()
     tty.setraw(master)
     args = [str(LUIT)]
-    child = ["sh", "-c", "printf '\\033[?2004h'; exec cat"] if paste_mode else ["cat"]
-    args += ["-encoding", enc, "--", *child]
+    args += ["-encoding", enc, "--", "cat"]
     p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
     os.close(slave)
     time.sleep(0.4)
@@ -394,8 +376,6 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
         got = out.decode("utf-8")
     except UnicodeDecodeError:
         return False, f"invalid UTF-8: {out!r}"
-    if paste_mode:
-        got = got.replace(PASTE_MODE_ON, "", 1)
     if got != expect:
         return False, f"{got!r} != expected {expect!r}"
     return True, f"round trip OK ({got!r})"
@@ -1027,9 +1007,9 @@ def main() -> int:
             failures += 1
 
     print("\n== input rejection across reads (real PTY round-trip) ==")
-    for enc, steps, paste_mode, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
+    for enc, steps, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
         total += 1
-        ok, detail = run_fallback_input_case(enc, steps, None, expect, paste_mode=paste_mode)
+        ok, detail = run_fallback_input_case(enc, steps, None, expect)
         mark = "OK " if ok else "NG "
         print(f"{mark}[{enc}] {desc} -> {detail}")
         if not ok:
