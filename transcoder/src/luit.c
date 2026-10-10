@@ -863,7 +863,7 @@ encodeLastArg(int argc, char **argv)
     }
     for (done = 0; done < len;) {
 	size_t n = len - done < BUFFER_SIZE ? len - done : BUFFER_SIZE;
-	if (copyIn(inputState, arg + done, (int) n, 0)) {
+	if (copyIn(inputState, arg + done, (int) n, 0.0) != INPUT_FORWARDED) {
 	    Message("luit: the command line wasn't run: %s can't represent"
 		    " U+%04X\n", locale_name, input_unencodable_char);
 	    ExitFailure();
@@ -872,6 +872,7 @@ encodeLastArg(int argc, char **argv)
 	done += n;
     }
     encoded[size] = '\0';
+    resetPasteTracking();	/* the command line isn't keyboard input */
     encoded_arg = encoded;
     argv[argc - 1] = (char *) encoded;
 }
@@ -1202,12 +1203,6 @@ notifyRejected(void)
     closedir(dir);
 }
 
-/* PATCH(fork, input rejection): how long input keeps being dropped after a
- * rejection, measured from the last dropped read. Long enough to cover a
- * paste arriving in several reads, short enough not to eat the next
- * keystroke typed by hand. */
-#define REJECT_QUIET_MILLIS 50.0
-
 /* PATCH(fork, title): VS Code re-reads the tab title every 200 ms, output
  * or not, so the inner foreground program is checked at the same pace
  * (e.g. a silent `sleep` shows up), but not more often: under heavy output
@@ -1228,7 +1223,6 @@ parent(int sfd, int pty)
     unsigned char buf[BUFFER_SIZE];
     int i;
     int rc;
-    double reject_until = 0.0;
     double title_due = 0.0;
 
     if (pipe_option) {
@@ -1288,20 +1282,13 @@ parent(int sfd, int pty)
 		    break;
 		if (i > 0) {
 		    /* PATCH(fork, input rejection): input with an unencodable
-		     * character is rejected as a whole (see copyIn) and the
-		     * user gets a bell. Input arriving right after that is
-		     * dropped too: a paste comes in several reads, and
-		     * forwarding only its tail could run a different command
-		     * than the one pasted. */
-		    double now = monotonicMillis();
-		    int discard = now < reject_until;
-		    int rejected = copyIn(inputState, buf, i, discard);
-		    if (rejected && !discard) {
+		     * character is rejected as a whole, and the rest of a
+		     * paste after it dropped (see copyIn); the user gets a
+		     * bell for the rejection */
+		    if (copyIn(inputState, buf, i, monotonicMillis()) == INPUT_REJECTED) {
 			IGNORE_RC(write(sfd, "\a", (size_t) 1));
 			notifyRejected();
 		    }
-		    if (discard || rejected)
-			reject_until = now + REJECT_QUIET_MILLIS;
 		    if (flushInput(pty, 0) < 0)
 			break;
 		}

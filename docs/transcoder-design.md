@@ -128,15 +128,34 @@ character the encoding can't represent is rejected as a whole, and the user
 gets a bell. Substituting `?` or dropping just that character would change the
 command the shell runs (`rm <emoji>*` becomes `rm ?*` / `rm *`). `copyIn()`
 converts each read into a buffer and only writes it if every character
-converted. A paste can arrive in several reads, so input is also dropped until
-it pauses for 50 ms after a rejection (forwarding only the tail of a paste
-could run a different command), and if a bracketed paste (`ESC [200~`) was
-already forwarded, its end marker is still passed through so the shell doesn't
-stay in paste mode. Both have gaps: the rest of a paste arriving after the
-pause gets through, and markers are only recognized whole within one read.
-Dropping up to the end marker instead would have to be bounded, as luit
-can't know that one will come (the terminal may not send markers at all,
-e.g. with `terminal.integrated.ignoreBracketedPasteMode`). Warning on stderr
+converted. A paste can arrive in several reads, and forwarding only its tail
+could run a different command, so what follows a rejection is dropped too:
+
+- Inside a bracketed paste (`ESC [200~` ... `ESC [201~`), up to its end
+  marker, however late the rest arrives.
+- Otherwise until input pauses for 50 ms.
+- Either way for at most 2 s from the rejection, not extended by the input
+  it drops. luit can't know that an end marker will come (VS Code's
+  `terminal.integrated.ignoreBracketedPasteMode`, a terminal reset, a lost
+  connection), so without the bound a wrong guess would drop every later
+  keystroke. A rest arriving later gets through: luit can't tell it from
+  typing. Locally that doesn't happen: VS Code writes a paste to the pty at
+  once (on Linux, 300 KB arrived within 3 ms), and luit reads what it drops without
+  waiting for the shell. If the drop ended at the bound with the shell not
+  in the paste, the paste's end marker is left out when it comes.
+
+Dropping up to the end marker needs bracketed paste on, which luit follows
+in the program's output (`ESC [?2004h`, also combined as in
+`ESC [?1049;2004h`, and `ESC [?2004l` or a reset, `ESC c`, to turn it off),
+and a start marker that arrived whole in one read, as the terminal writes a
+paste: one typed key by key doesn't count. The end marker is recognized
+split across reads. A read is handled in parts ending at each end marker,
+so input after a paste's end in the same read is converted on its own: a
+character there that can't be encoded is rejected by itself. If the shell
+got the paste's start marker, it still gets the end marker (or the part of
+it it hasn't got), unless the program has turned bracketed paste off since. The paste state is
+reset after `-encode-last-arg` converts a task's command line.
+Warning on stderr
 instead isn't an option either: the messages would be mixed into the
 terminal output.
 

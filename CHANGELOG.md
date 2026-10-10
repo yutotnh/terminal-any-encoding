@@ -19,6 +19,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   for example) could be lost when VS Code read it late.
 - Opening a second terminal of the same encoding from the dropdown while
   the first was still starting could leave the second one inactive.
+- When a paste was rejected for a character the encoding can't represent,
+  the rest of it could still reach the shell if it arrived more than
+  50 ms later, as it can over a remote connection, and a paste's end
+  marker split across reads could leave the shell in paste mode. The rest
+  of a paste is now dropped up to its end (for 2 seconds at most), and
+  input after the paste's end is sent as usual.
 
 ## [0.1.0] - 2026-10-08
 

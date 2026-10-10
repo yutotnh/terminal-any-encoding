@@ -24,6 +24,7 @@ import termios
 import tty
 from pathlib import Path
 import time
+import typing
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LUIT = REPO_ROOT / "transcoder" / "src" / "luit"
@@ -92,19 +93,47 @@ FALLBACK_INPUT_CASES = [
 ]
 
 # Input arriving in several reads after a rejection (a paste) is dropped
-# until input pauses, so only the paste's tail can never reach the shell;
-# the next input after the pause goes through. An open bracketed paste is
-# still closed. (encoding, [(delay before write, text)], expected, description)
+# too, so the paste's tail alone can never reach the shell: inside a
+# bracketed paste up to its end marker, otherwise until input pauses for
+# 50 ms, and either way for at most 2 s from the rejection, as luit can't
+# know an end marker will come. The next input after that goes through. An
+# open bracketed paste is still closed. Bracketed paste counts as on once
+# the child has printed BP_ON, as a shell does.
+# (encoding, [(delay before write, text)], child output, expected,
+# description; the inner tty echoes ESC as ^[)
+BP_ON = "\x1b[?2004h"
+
+
+def _a_after_cap(got: str) -> bool:
+    """The bell, then some of the a's: those after the 2 s bound"""
+    return got.startswith("\a") and 5 <= got.count("a") < 75
+
+
 INPUT_REJECTION_SEQUENCE_CASES = [
-    ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], "\a", "the rest of a split paste is dropped too"),
-    ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], "\aok", "input after a pause goes through again"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste (the inner tty echoes ESC as ^[)"),
-    # Whether an end marker will come can't be known (the terminal may not
-    # send markers at all), so a start marker must never hold input back
-    # for longer than the pause
-    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], "\aok", "a start marker without an end marker doesn't hold input back"),
-    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")],
+    ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], None, "\a", "the rest of a split paste is dropped too"),
+    ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], None, "\aok", "input after a pause goes through again"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], None, "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste"),
+    # A start marker must never hold input back beyond the bound: the
+    # terminal may not send an end marker at all
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], None, "\aok", "with bracketed paste off, a start marker doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "\x1b"), (0.05, "["), (0.05, "2"), (0.05, "0"), (0.05, "0"), (0.05, "~"), (0.3, "☃"), (0.3, "ok")], BP_ON,
      "^[[200~\aok", "a start marker typed key by key doesn't hold input back"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x"), (2.3, "ok")], BP_ON, "\aok", "no end marker: input is held back for 2 s at most"),
+    # Bracketed paste: dropped up to the end marker
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\n\x1b[201~"), (0.3, "ok")], BP_ON, "\aok", "the rest of a bracketed paste is dropped up to its end marker, however late"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\aok", "an end marker split across reads ends the paste"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[201~ok")], BP_ON, "\aok", "input after the end marker in the same read goes through"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃\x1b[201~ok")], BP_ON, "\aok", "input after the end marker in the rejected read itself goes through"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[201~☃")], BP_ON, "\a\a", "a character after the end marker that can't be encoded is rejected on its own"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ -rf"), (0.3, " x\x1b[201~")], BP_ON, "^[[200~X\a^[[201~", "an open paste rejected in the middle is dropped and closed at its end marker"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, " y\x1b[20"), (0.3, "1~☃")], BP_ON, "^[[200~X y^[[20\a1~", "an end marker whose first part went through is completed, not sent again"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.6, " x\x1b[201~ok")], BP_ON, "\a xok", "after the bound, the end marker of the dropped paste is left out"),
+    # What the program printed decides whether markers count
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\x1b[?1049;2004h", "\aok", "bracketed paste turned on in a combined sequence"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~☃"), (0.3, "ok")], BP_ON + "\x1bc", "\aok", "a terminal reset turns bracketed paste off"),
+    # The 50 ms pause can't be held open beyond the bound by input that
+    # keeps coming (a key held down after a rejection)
+    ("euc-jp-2007", [(0.0, "☃")] + [(0.04, "a")] * 75, None, _a_after_cap, "input that keeps coming is held back for 2 s at most"),
 ]
 
 # Chinese, Korean, and single-byte encodings
@@ -336,19 +365,27 @@ def run_fallback_output_case(enc: str, hexin: str, mode: str | None, expect: str
     return True, repr(text)
 
 
-def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None, expect: str) -> tuple[bool, str]:
+def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mode: str | None,
+                            expect: "str | typing.Callable[[str], bool]",
+                            child_output: str | None = None) -> tuple[bool, str]:
     """Launches luit on a raw-mode PTY and confirms via round trip the byte
     sequence the child (cat) actually received. The head -c approach was
     unstable due to shell startup timing in this environment, so this uses a
     subprocess approach where tty.setraw() fully raw-mode's the outer PTY
     instead (with ICANON left on, input
     got buffered until a newline, and unmapped-character fallback couldn't
-    be verified correctly).
+    be verified correctly). With child_output, the child prints that before
+    it becomes cat, as a shell turns bracketed paste on (it isn't part of
+    what's compared). expect is the text to come back, or a function that
+    judges it.
     """
     master, slave = pty.openpty()
     tty.setraw(master)
     args = [str(LUIT)]
-    args += ["-encoding", enc, "--", "cat"]
+    child = ["cat"]
+    if child_output is not None:
+        child = ["sh", "-c", 'printf "%s" "$0"; exec cat', child_output]
+    args += ["-encoding", enc, "--", *child]
     p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
     os.close(slave)
     time.sleep(0.4)
@@ -382,6 +419,10 @@ def run_fallback_input_case(enc: str, text: "str | list[tuple[float, str]]", mod
         got = out.decode("utf-8")
     except UnicodeDecodeError:
         return False, f"invalid UTF-8: {out!r}"
+    if child_output is not None:
+        got = got.replace(child_output, "", 1)
+    if callable(expect):
+        return expect(got), f"got {got!r}"
     if got != expect:
         return False, f"{got!r} != expected {expect!r}"
     return True, f"round trip OK ({got!r})"
@@ -811,6 +852,40 @@ def run_extension_env_removed_case() -> tuple[bool, str]:
     return "END" in text and not leaked, f"leaked {leaked}" if leaked else "none leaked"
 
 
+def run_encode_last_arg_paste_state_case() -> tuple[bool, str]:
+    """A paste start marker in a task's command line (-encode-last-arg)
+    isn't taken for one the shell got: input rejected afterwards isn't held
+    back up to an end marker that will never come."""
+    master, slave = pty.openpty()
+    tty.setraw(master)
+    command = ": '\x1b[200~'; printf '\\033[?2004h'; exec cat"
+    p = subprocess.Popen([str(LUIT), "-encoding", "euc-jp-2007", "-encode-last-arg", "--", "sh", "-c", command],
+                         stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
+    os.close(slave)
+    time.sleep(0.4)
+    os.write(master, "☃".encode("utf-8"))
+    time.sleep(0.3)
+    os.write(master, b"ok")
+    out = b""
+    end = time.time() + 1.2
+    while time.time() < end:
+        r, _, _ = select.select([master], [], [], 0.3)
+        if not r:
+            continue
+        try:
+            d = os.read(master, 4096)
+        except OSError:
+            break
+        if not d:
+            break
+        out += d
+    os.close(master)
+    p.kill()
+    p.wait(timeout=1)
+    got = out.decode("utf-8", "replace").replace("\x1b[?2004h", "")
+    return got == "\aok", f"got {got!r}"
+
+
 def run_classic_tree_case() -> tuple[bool, str]:
     """Without a controlling terminal of its own (not how terminals start
     shells) luit keeps the classic layout, shell as its child, and passes
@@ -1013,9 +1088,9 @@ def main() -> int:
             failures += 1
 
     print("\n== input rejection across reads (real PTY round-trip) ==")
-    for enc, steps, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
+    for enc, steps, child_output, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
         total += 1
-        ok, detail = run_fallback_input_case(enc, steps, None, expect)
+        ok, detail = run_fallback_input_case(enc, steps, None, expect, child_output=child_output)
         mark = "OK " if ok else "NG "
         print(f"{mark}[{enc}] {desc} -> {detail}")
         if not ok:
@@ -1050,6 +1125,7 @@ def main() -> int:
             ("tab title follows the foreground program", run_title_case, True),
             ("started by the extension, marks its copy as used", run_mark_copy_used_case, False),
             ("started by the extension, the shell doesn't inherit its variables", run_extension_env_removed_case, False),
+            ("a paste marker in a task's command line isn't taken for typed input", run_encode_last_arg_paste_state_case, False),
             ("classic (no controlling terminal)", run_classic_tree_case, False)]:
         if linux_only and not sys.platform.startswith("linux"):
             print(f"SKIP {name} (Linux only)")

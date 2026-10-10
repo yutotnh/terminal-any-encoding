@@ -158,6 +158,7 @@ Works for bash, zsh, fish and pwsh, as in VS Code's own terminals.
 
 Input with a character the encoding can't represent (e.g. an emoji in an EUC-JP terminal) isn't sent to the terminal.
 A notification names the character.
+If it was pasted, the rest of the paste isn't sent either, unless it arrives more than 2 seconds later (as it can over a slow remote connection).
 
 ### Mojibake or `�`
 
