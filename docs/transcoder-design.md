@@ -193,8 +193,11 @@ in the reverse index. Each table in `converters.json` can have an
 `input_aliases` array, and `gen_tables.py` puts those rows before the base
 rows: the base row still decides what's displayed, and the alias only adds a
 character that's sent as those bytes, e.g. U+301C → EUC `A1C1` in
-`jisx0208-2007-0`. luit itself is untouched. Whether a row is used for
-encoding is decided like for any other row (next section).
+`jisx0208-2007-0`. luit's only change for this is in
+`initializeBuiltInTable()`, which frees the earlier row's text when a later
+row for the same `source` replaces it (upstream's tables have one row per
+`source`, so it never needed to). Whether a row is used for encoding is
+decided like for any other row (next section).
 
 ## Which bytes a character is sent as
 
@@ -307,6 +310,11 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
 
 ## Known upstream bugs and fixes
 
+- Not fixed yet: loading a table in `luitconv.c` doesn't check its
+  allocations (`newLuitConv()`'s arrays, the encoding name, each row's
+  text), so running out of memory then crashes luit, also mid-session when
+  a program designates a charset not loaded yet. A fix has to cover all of
+  them at once and leave no half-made table behind.
 - `allocatePty()` in `sys.c`, `openpty()` path: `openpty()` also opens the
   slave side, and only the child closed it (in `openTty()`). The parent
   kept it open, so the master never saw EOF/EIO when the shell exited and
