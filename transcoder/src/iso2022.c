@@ -470,10 +470,12 @@ static int in_paste = 0;
 static double paste_started = 0.0;
 /* the shell got a paste's start marker but not its end marker */
 static int paste_open = 0;
-/* input that may be a paste marker, held */
+/* input that may be a paste marker, held, and whether it came with input
+ * that was rejected or dropped (then it's dropped too if it isn't one) */
 static unsigned char held[PASTE_MARKER_LEN];
 static size_t held_len = 0;
 static double held_since = 0.0;
+static int held_dropped = 0;
 
 /* what copyIn() has rejected in the chunk it's converting */
 static int chunk_rejected = 0;
@@ -1101,15 +1103,18 @@ heldContinues(unsigned char b)
     return b == PASTE_START[held_len];
 }
 
-/* Passes held input on as input like any other */
+/* Passes held input from an earlier read on as input like any other, or
+ * drops it with the input it came with */
 static void
 releaseHeld(Iso2022Ptr is, double now)
 {
     unsigned char bytes[PASTE_MARKER_LEN];
     size_t n = held_len;
 
-    memcpy(bytes, held, n);
     held_len = 0;
+    if (held_dropped)
+	return;
+    memcpy(bytes, held, n);
     inputText(is, bytes, n, now);
 }
 
@@ -1144,17 +1149,22 @@ flushHeldInput(Iso2022Ptr is, double now)
 /*
  * PATCH(fork, input rejection): converts one chunk of keyboard input and
  * queues it (flushInput() writes it, takeInput() hands it over), `now`
- * being the time in milliseconds. Input with a character that can't be
- * encoded is rejected as a whole (see convertUnit()) and what follows it
- * dropped (see DROP_MAX_MILLIS), in parts between paste markers, which are
- * handled on their own (see pasteMarker()). Returns 1 if anything was
- * rejected (the caller rings the bell), with the first character that
- * couldn't be encoded in input_unencodable_char.
+ * being the time in milliseconds. The chunk is handled in parts between
+ * paste markers, which are handled on their own (see pasteMarker()): a part
+ * with a character that can't be encoded is rejected as a whole (see
+ * convertUnit()), escapes in it included, and what follows it dropped (see
+ * DROP_MAX_MILLIS). What's held at the chunk's end (see flushHeldInput())
+ * goes with the part before it: if it isn't a marker, it's dropped if that
+ * part was, or else passed on by itself, as the start of the next chunk
+ * would be. Returns 1 if anything was rejected (the caller rings the bell),
+ * with the first character that couldn't be encoded in
+ * input_unencodable_char.
  */
 int
 copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 {
-    size_t n = (size_t) count, from = 0, k;
+    size_t n = (size_t) count, from = 0, held_at = 0, k;
+    int held_here = 0;		/* what's held starts at buf + held_at */
 
     assert(count <= BUFFER_SIZE);
     assert(input_pending_len == 0);
@@ -1167,25 +1177,42 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 	    if (heldContinues(b)) {
 		held[held_len++] = b;
 		held_since = now;
-		from = k + 1;
 		if (held_len == PASTE_MARKER_LEN) {
+		    if (held_here)
+			inputText(is, buf + from, held_at - from, now);
 		    held_len = 0;
+		    held_here = 0;
 		    pasteMarker(is, held[4] == '1', now);
+		    from = k + 1;
 		}
 		continue;
 	    }
-	    releaseHeld(is, now);	/* not a marker after all */
+	    /* not a marker after all */
+	    if (held_here) {
+		held_len = 0;	/* part of the text from `from` */
+		held_here = 0;
+	    } else {
+		releaseHeld(is, now);
+		from = k;
+	    }
 	}
 	if (b == ESC) {
-	    inputText(is, buf + from, k - from, now);
 	    held[0] = b;
 	    held_len = 1;
 	    held_since = now;
-	    from = k + 1;
+	    held_at = k;
+	    held_here = 1;
 	}
     }
-    if (held_len == 0)
+    if (held_len == 0) {
 	inputText(is, buf + from, n - from, now);
+    } else if (held_here) {
+	inputText(is, buf + from, held_at - from, now);
+	checkDrop(is, now);
+	held_dropped = dropping != DROP_NONE;
+	if (held_dropped)
+	    drop_last = now;
+    }
     if (chunk_rejected)
 	input_unencodable_char = chunk_rejected_char;
     return chunk_rejected;

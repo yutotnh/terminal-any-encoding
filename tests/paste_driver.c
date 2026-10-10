@@ -1,15 +1,17 @@
 /*
  * Drives luit's input conversion (copyIn() in transcoder/src/iso2022.c)
- * through every way a rejected paste can be split into reads, with the
- * time faked, and checks what the shell gets against the rules in
- * docs/transcoder-design.md ("Fallback design for conversion failures").
+ * through every way a rejected paste can be split into reads, and rejected
+ * reads with other escapes in them, with the time faked, and checks what
+ * the shell gets against the rules in docs/transcoder-design.md
+ * ("Fallback design for conversion failures").
  * Built and run by tests/test_encodings.py against transcoder/src's
  * objects; prints each scenario that breaks a rule and exits 1 if any did.
  *
  * Input is ASCII but for the snowman (U+2603, which EUC-JP can't
  * represent), so what the shell gets is the same bytes: paste content is
  * the letters p-z, typed input "ok", and the only ESC, digits and '~' are
- * the paste markers'.
+ * the paste markers', but in escapesInRejected(), which checks what the
+ * shell gets as a whole.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,6 +111,8 @@ fail(const char *rule, const char *what, const Read *reads, int n)
 	    unsigned char c = (unsigned char) reads[k].bytes[i];
 	    if (c == 033)
 		printf("^[");
+	    else if (c == '\n')
+		printf("\\n");
 	    else if (c >= 0x80)
 		printf("\\%o", c);
 	    else
@@ -117,8 +121,14 @@ fail(const char *rule, const char *what, const Read *reads, int n)
 	putchar('"');
     }
     printf(" -> \"");
-    for (i = 0; i < shell_len; i++)
-	putchar(shell[i] == 033 ? '^' : shell[i]);
+    for (i = 0; i < shell_len; i++) {
+	if (shell[i] == 033)
+	    putchar('^');
+	else if (shell[i] >= 0x80)
+	    printf("\\%o", shell[i]);
+	else
+	    putchar(shell[i]);
+    }
     printf("\"\n");
 }
 
@@ -434,6 +444,53 @@ pasteAfterBound(void)
     }
 }
 
+/*
+ * A rejected read with escapes in it that aren't paste markers (keys, or
+ * what only starts like a marker) before and after the snowman, alone or
+ * in a paste: none of it reaches the shell, not even what's held at its
+ * end and passed on later. Only the markers do.
+ */
+static void
+escapesInRejected(void)
+{
+    /* not an ESC right before the snowman: upstream's parser takes the
+     * byte after an ESC as a character of its own (U+00E2 for the
+     * snowman's first), so nothing is rejected there */
+    static const char *const parts[] = {
+	"", "pq", "pq\n", "\033[D", "\033b", "\033\033[D",
+	"\033[20x", "\033[2000", "\033[200", "\033[201", "pq\033"
+    };
+    const int count = (int) (sizeof(parts) / sizeof(parts[0]));
+    int bracketed, wrapped, a, b;
+
+    for (bracketed = 0; bracketed <= 1; bracketed++) {
+	for (wrapped = 0; wrapped <= 1; wrapped++) {
+	    for (a = 0; a < count - 1; a++) {
+		for (b = 0; b < count; b++) {
+		    Read reads[2];
+		    char what[96];
+		    const char *expect = wrapped ? START END "ok" : "ok";
+
+		    reads[0].delay = 0.0;
+		    snprintf(reads[0].bytes, sizeof(reads[0].bytes), "%s%s" SNOWMAN "%s%s",
+			     wrapped ? START : "", parts[a], parts[b], wrapped ? END : "");
+		    reads[1].delay = BOUND + 100.0;
+		    strcpy(reads[1].bytes, "ok");
+		    snprintf(what, sizeof(what), "bracketed %s, %s, escapes %d/%d in the rejected read",
+			     bracketed ? "on" : "off", wrapped ? "pasted" : "typed", a, b);
+		    scenarios++;
+		    setUp(bracketed);
+		    feed(reads, 2);
+		    if (shell_len != strlen(expect) || memcmp(shell, expect, shell_len))
+			fail("nothing of a rejected read but its markers", what, reads, 2);
+		    else if (bells != 1)
+			fail("one bell", what, reads, 2);
+		}
+	    }
+	}
+    }
+}
+
 /* A key held down after a rejection, 10 ms apart: dropped for the bound,
  * then let through */
 static void
@@ -469,6 +526,7 @@ main(void)
     endCutTwice();
     startForwardedPart();
     pasteAfterBound();
+    escapesInRejected();
     heldKey();
     printf("%d of %d scenarios kept every rule\n", scenarios - failures, scenarios);
     return failures ? 1 : 0;

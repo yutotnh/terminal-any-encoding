@@ -157,7 +157,8 @@ may be one (`ESC [ 2 0 0`, so far) until it is one or isn't, and then
 passes on a whole marker by these rules, which `tests/paste_driver.c`
 checks for every way a rejected paste can be split into reads (cut in
 either marker, before the rejected character, with gaps around the pause
-and the bound), with the time faked:
+and the bound), and for rejected reads with other escapes in them, with
+the time faked:
 
 - The shell never gets part of a marker, and gets markers in order: a
   start marker unless it's dropped, an end marker only if it got the
@@ -171,7 +172,9 @@ and the bound), with the time faked:
 - A read is handled in parts between markers, so input after a paste's end
   in the same read is converted on its own: a character there that can't
   be encoded is rejected by itself (the notification still names the first
-  one).
+  one). A part is rejected as a whole, other escapes in it (keys such as
+  `ESC [D`) included, and so is what's held at the end of a rejected read
+  if it doesn't turn out to be a marker.
 
 A lone ESC is what the Escape key sends, so one held at the end of a read
 goes on as a key after 10 ms if nothing follows; more of a marker
