@@ -111,8 +111,9 @@ else
   # and so on), which --sanitize wants for them, not for the warnings
   # (they aren't checked then): LeakSanitizer takes any pointer it finds in
   # memory as a reference, so what it reports depends on the generated
-  # code, and without them a stale pointer on main()'s stack hid a leak of
-  # every -encode-last-arg run.
+  # code. Without them a stale pointer on main()'s stack hid a leak of
+  # every -encode-last-arg run; with them that one shows, though a leak
+  # some stale pointer happens to reference can always go unreported.
   if [ "$WARNINGS" = "1" ] || [ "$SANITIZE" = "1" ]; then
     CONFIGURE_ARGS+=(--enable-warnings)
   fi
@@ -134,8 +135,8 @@ JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 
 # Fails on a warning in make's output (on stdin) that isn't known, by the
 # source line the compiler quotes right after it (" 185 |   <line>", or
-# the line alone). Serially (one compiler writing at a time), each warning
-# is followed by its own line.
+# the line alone). Each warning is followed by its own line as long as the
+# compilers' output isn't interleaved (see the --warnings build below).
 check_warnings() {
   KNOWN="$(printf '%s\n' "${KNOWN_WARNINGS[@]}")" awk '
     BEGIN {
@@ -173,8 +174,15 @@ if [ "$STATIC" = "1" ]; then
   echo "Static build complete: $SRC_DIR/luit ($(du -h luit | cut -f1))"
   file luit
 elif [ "$WARNINGS" = "1" ]; then
-  # Serially (see check_warnings), in C for messages as listed
-  LC_ALL=C make 2>&1 | check_warnings
+  # Each compiler's output kept together (GNU make 4's --output-sync,
+  # else serially; macOS has make 3.81), in C for messages as listed
+  # (grep reads all of it: -q could stop make with SIGPIPE, which
+  # pipefail would count as no)
+  if make --help 2>/dev/null | grep -- --output-sync >/dev/null; then
+    LC_ALL=C make -j"$JOBS" --output-sync=target 2>&1 | check_warnings
+  else
+    LC_ALL=C make 2>&1 | check_warnings
+  fi
   echo "Native build complete, no unknown warnings: $SRC_DIR/luit"
 else
   make -j"$JOBS"

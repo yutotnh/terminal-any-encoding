@@ -284,8 +284,9 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
   source line the compiler quotes after the warning (gcc and clang both
   do), so an entry holds wherever the line moves and with either compiler,
   and a warning of the same kind elsewhere in the file still counts. The
-  quoted line follows its warning only when one compiler writes at a time,
-  so this build is serial.
+  quoted line follows its warning only if the compilers' output isn't
+  interleaved, so this build keeps each one's output together (GNU make's
+  `--output-sync`, or serially where make lacks it).
 - `--sanitize` runs the tests under AddressSanitizer, UBSan and
   LeakSanitizer. It builds with configure's `--disable-leaks` (also on its
   own as `--leak-check`), under which luit frees its permanent memory at
@@ -297,7 +298,8 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
   configures with `--enable-warnings`, for the attributes it defines
   (`noreturn` on `ExitProgram()` and so on): LeakSanitizer takes any pointer
   it finds in memory as a reference, and without them a stale pointer on
-  `main()`'s stack hid a leak. Reports go to files, as luit's stderr is the terminal, and the
+  `main()`'s stack hid a leak. That makes such misses less likely, not
+  impossible. Reports go to files, as luit's stderr is the terminal, and the
   converter luit detaches writes its report when it exits, possibly after
   the tests return, so `scripts/check-sanitizer-reports.sh` waits for it.
   Warnings aren't checked in this build (gcc warns more falsely with
@@ -306,8 +308,11 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
 ## Known upstream bugs and fixes
 
 - `initializeBuiltInTable()` in `luitconv.c` wrote each row's text through
-  `malloc()`'s result unchecked. luit now stops with a message: nothing
-  undoes a half-made table, and luit can't run without its tables.
+  `malloc()`'s result unchecked. Now the table isn't loaded then, as when
+  any other part of it can't be allocated: luit goes on without that
+  charset. Tables are also loaded mid-session (a charset a program
+  designates), so stopping luit isn't an option, and leaving the row out
+  would leave its code point encoding to bytes that don't decode.
 - `allocatePty()` in `sys.c`, `openpty()` path: `openpty()` also opens the
   slave side, and only the child closed it (in `openTty()`). The parent
   kept it open, so the master never saw EOF/EIO when the shell exited and

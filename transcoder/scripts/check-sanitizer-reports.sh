@@ -12,11 +12,13 @@
 #
 # Not every report fails a test: the converter luit detaches writes its
 # report when it exits, possibly after the tests have returned. So this
-# first waits for every process running this build's luit to exit (other
-# luits, such as VS Code terminals', aren't waited for), then fails on any
-# report, or on a luit still running after 30 s, which is a bug too. Linux
-# only, like LeakSanitizer itself on the runners: processes are found
-# through /proc.
+# first waits for every process running this build's luit to exit, then
+# fails on any report, or on a luit still running after 30 s, which is a
+# bug too. "This build" goes by the executable's contents, not its path:
+# the parity test runs a copy from a temporary directory (deleted by then),
+# and other luits, such as VS Code terminals', are other builds. Linux only,
+# like LeakSanitizer itself on the runners: processes are found through
+# /proc, whose exe can be read even after the file is gone.
 set -euo pipefail
 
 if [ $# -ne 1 ] || [ ! -d "$1" ]; then
@@ -26,13 +28,14 @@ fi
 REPORTS="$1"
 LUIT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src" && pwd)/luit"
 
-# The pids of the processes running $LUIT
+# The pids of the processes running a copy of $LUIT, whatever their name
+# (one started through a shell-named link is "bash" until it renames
+# itself); cmp stops at the first byte that differs
 running() {
-  local exe pid
-  for exe in /proc/[0-9]*/exe; do
-    [ "$(readlink "$exe" 2>/dev/null)" = "$LUIT" ] || continue
-    pid="${exe#/proc/}"
-    echo "${pid%/exe}"
+  local dir
+  for dir in /proc/[0-9]*; do
+    cmp -s "$dir/exe" "$LUIT" 2>/dev/null || continue
+    echo "${dir#/proc/}"
   done
 }
 
