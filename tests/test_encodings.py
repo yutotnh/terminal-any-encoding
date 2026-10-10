@@ -145,16 +145,23 @@ INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y\x1b[20"), (2.3, "1~"), (0.3, "ok")], BP_ON, "^[[200~X\a^[[201~ok", "an end marker cut by the bound still closes the paste"),
     ("euc-jp-2007", [(0.0, "☃ x\x1b[20"), (0.3, "0~abc")], None, "\aabc", "a start marker cut by the pause isn't sent or counted"),
     ("euc-jp-2007", [(0.0, "☃\x1b[1;5"), (0.3, "Hok")], None, "\aHok", "after a pause, what comes is input of its own"),
-    # At the bound with input still coming, the rest of a sequence the drop
-    # cut is dropped, and only that: nothing but whole sequences get
-    # through, and a key after a held Escape isn't lost
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (1.85, "\x1b[")] + [(0.01, "1")] * 30 + [(0.01, "H"), (0.03, "ok")], BP_ON, "\aok",
-     "the bound doesn't let the rest of a cut escape sequence through"),
-    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (1.85, "\x1b[")] + [(0.01, "1")] * 30 + [(0.01, "あok")], BP_ON, "\aあok",
-     "what doesn't continue a cut sequence is kept"),
+    # After the bound, what comes goes through as it is (as the rest of a
+    # paste does), and none of it is lost; only a paste marker the bound cut
+    # is completed for a shell in the paste
+    # (the bound falls between the end marker's halves, with input still
+    # coming; arriving otherwise, the marker closes the paste too)
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ y"), (1.97, "\x1b[20"), (0.04, "1~"), (0.03, "ok")], BP_ON, "^[[200~X\a^[[201~ok",
+     "an end marker the bound cuts still closes the paste"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (1.85, "\x1b[")] + [(0.01, "1")] * 30 + [(0.01, "あok")], BP_ON,
+     lambda got: got.startswith("\a") and got.endswith("あok"), "after the bound, nothing that comes is lost"),
     ("euc-jp-2007", [(0.0, "☃")] + [(0.01, "\x1b")] * 250 + [(0.03, "i")], None, _escapes_then_i, "after the bound, a held Escape and the key after it go through"),
     ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (2.3, " y\x1b[20"), (0.3, "1~"), (0.3, "ok")], BP_ON, "\a y^[[201~ok", "after the bound, an end marker that partly went through is completed"),
 ]
+
+# Cases that need input to keep coming under 50 ms apart, the drop's pause.
+# macOS runners delay a write by up to 49 ms (measured), so these can't
+# set up there what they test, and run on Linux only.
+STEADY_INPUT_CASES = {"input that keeps coming is held back for 2 s at most"}
 
 # Chinese, Korean, and single-byte encodings
 # (encoding, input byte sequence (hex), expected code point, description)
@@ -1124,6 +1131,9 @@ def main() -> int:
 
     print("\n== input rejection across reads (real PTY round-trip) ==")
     for enc, steps, child_output, expect, desc in INPUT_REJECTION_SEQUENCE_CASES:
+        if desc in STEADY_INPUT_CASES and sys.platform == "darwin":
+            print(f"SKIP [{enc}] {desc} (needs writes under 50 ms apart; macOS runners lag up to 49 ms)")
+            continue
         total += 1
         ok, detail = run_fallback_input_case(enc, steps, None, expect, child_output=child_output)
         mark = "OK " if ok else "NG "

@@ -465,90 +465,7 @@ static int paste_open_whole = 0;
 /* a drop up to an end marker ended at the bound, with the shell not in
  * the paste: its end marker, when it comes, is left out */
 static int orphan_end = 0;
-/* a drop ended at the bound with input still coming: the rest of an
- * escape sequence or UTF-8 character it cut is dropped too, as long as
- * input keeps coming (see copyIn()) */
-static int skipping = 0;
 
-/* Where input is in an escape sequence or a UTF-8 character, followed over
- * all of it, forwarded or not, so that the end of a drop can tell whether
- * it cut one (luit's own parser doesn't follow CSI sequences) */
-static enum {
-    LEX_TEXT,
-    LEX_ESC,			/* after ESC, and any intermediate bytes */
-    LEX_CSI,			/* ESC [ ..., up to a final byte */
-    LEX_SS3,			/* ESC O, one more byte */
-    LEX_UTF8			/* lex_more continuation bytes to come */
-} lex = LEX_TEXT;
-static int lex_more = 0;
-
-/* Whether b continues (or ends) the sequence in progress */
-static int
-lexContinues(unsigned char b)
-{
-    switch (lex) {
-    case LEX_ESC:
-	return b >= 0x20 && b <= 0x7E;
-    case LEX_CSI:
-	return b >= 0x20 && b <= 0x7E;
-    case LEX_SS3:
-	return b >= 0x20 && b <= 0x7E;
-    case LEX_UTF8:
-	return (b & 0xC0) == 0x80;
-    case LEX_TEXT:
-	break;
-    }
-    return 0;
-}
-
-static void
-lexByte(unsigned char b)
-{
-    if (lexContinues(b)) {
-	switch (lex) {
-	case LEX_ESC:
-	    if (b == '[')
-		lex = LEX_CSI;
-	    else if (b == 'O')
-		lex = LEX_SS3;
-	    else if (b >= 0x30)
-		lex = LEX_TEXT;	/* a final byte; 0x20-0x2F are intermediates */
-	    break;
-	case LEX_CSI:
-	    if (b >= 0x40)
-		lex = LEX_TEXT;	/* a final byte */
-	    break;
-	case LEX_SS3:
-	    lex = LEX_TEXT;
-	    break;
-	case LEX_UTF8:
-	    if (--lex_more == 0)
-		lex = LEX_TEXT;
-	    break;
-	case LEX_TEXT:
-	    break;
-	}
-	return;
-    }
-    /* b ends a sequence by not belonging to it, or there was none */
-    if (b == ESC) {
-	lex = LEX_ESC;
-    } else if (b >= 0xC2 && b <= 0xF4) {
-	lex = LEX_UTF8;
-	lex_more = (b >= 0xF0) ? 3 : (b >= 0xE0) ? 2 : 1;
-    } else {
-	lex = LEX_TEXT;
-    }
-}
-
-static void
-lexInput(const unsigned char *buf, size_t n)
-{
-    size_t k;
-
-    for (k = 0; k < n; k++)
-	lexByte(buf[k]);
-}
 /* the last bytes of input, for a marker split across reads, and whether
  * each was forwarded */
 static unsigned char carry[PASTE_MARKER_LEN - 1];
@@ -628,8 +545,19 @@ flushInput(int fd, int block)
     return rc;
 }
 
-/* PATCH(fork, input rejection): byte k of the carried bytes followed by
- * buf */
+/* PATCH(fork, input rejection): how many of the carried bytes from k on
+ * were forwarded */
+static size_t
+carriedSent(size_t k)
+{
+    size_t n = 0;
+
+    for (; k < carry_len; k++)
+	n += carry_sent[k];
+    return n;
+}
+
+/* Byte k of the carried bytes followed by buf */
 static unsigned char
 streamByte(const unsigned char *buf, size_t k)
 {
@@ -682,15 +610,13 @@ static int
 findEnd(const unsigned char *buf, size_t n, size_t *unit, size_t *at, size_t *sent)
 {
     size_t len = carry_len + n;
-    size_t k, j;
+    size_t k;
 
     for (k = 0; k < len; k++) {
 	if (streamByte(buf, k) == ESC && markerAt(buf, len, k, PASTE_END)) {
 	    *unit = k + PASTE_MARKER_LEN - carry_len;
 	    *at = k;
-	    *sent = 0;
-	    for (j = k; j < carry_len; j++)
-		*sent += carry_sent[j];
+	    *sent = carriedSent(k);
 	    return 1;
 	}
     }
@@ -711,12 +637,8 @@ followMarkers(const unsigned char *buf, size_t n, int *inside, int *whole)
 	if (streamByte(buf, k) != ESC)
 	    continue;
 	if (markerAt(buf, len, k, PASTE_START)) {
-	    size_t j;
-	    int all_sent = 1;
-
-	    for (j = k; j < carry_len; j++)
-		all_sent &= carry_sent[j];
-	    if (all_sent) {	/* else its start was dropped */
+	    if (k >= carry_len || carriedSent(k) == carry_len - k) {
+		/* else its start was dropped */
 		*inside = 1;
 		*whole = k >= carry_len;
 	    }
@@ -732,15 +654,12 @@ static size_t
 startCut(const unsigned char *buf, size_t n)
 {
     size_t len = carry_len + n;
-    size_t k, j;
+    size_t k;
 
     for (k = 0; k < carry_len; k++) {
-	if (carry[k] == ESC && markerAt(buf, len, k, PASTE_START)) {
-	    for (j = k; j < carry_len; j++) {
-		if (!carry_sent[j])
-		    return k + PASTE_MARKER_LEN - carry_len;
-	    }
-	}
+	if (carry[k] == ESC && markerAt(buf, len, k, PASTE_START)
+	    && carriedSent(k) < carry_len - k)
+	    return k + PASTE_MARKER_LEN - carry_len;
     }
     return 0;
 }
@@ -762,9 +681,6 @@ endDrop(Iso2022Ptr is, int at_bound)
     if (at_bound && dropping == DROP_TO_END && !paste_open)
 	orphan_end = 1;
     dropping = DROP_NONE;
-    skipping = at_bound;
-    if (!skipping)
-	lex = LEX_TEXT;		/* after a pause, nothing is cut */
     /* luit's parser didn't see the dropped bytes */
     is->parserState = P_NORMAL;
     buffered_input_count = 0;
@@ -851,8 +767,6 @@ resetPasteTracking(void)
     paste_open = 0;
     paste_open_whole = 0;
     orphan_end = 0;
-    skipping = 0;
-    lex = LEX_TEXT;
     carry_len = 0;
 }
 
@@ -1275,31 +1189,9 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, double now)
 	else if (dropping == DROP_TO_PAUSE && now - drop_last >= DROP_PAUSE_MILLIS)
 	    endDrop(is, 0);
 
-	if (skipping) {
-	    /* the rest of what the bound cut, while input keeps coming
-	     * (within DROP_PAUSE_MILLIS): only bytes that continue the
-	     * sequence, so whatever follows is kept */
-	    size_t k = 0;
-
-	    if (now - drop_last < DROP_PAUSE_MILLIS) {
-		while (k < rest && lex != LEX_TEXT && lexContinues(buf[k]))
-		    lexByte(buf[k++]);
-	    }
-	    drop_last = now;
-	    keepCarry(buf, k, 0);
-	    buf += k;
-	    rest -= k;
-	    if (rest == 0 && k > 0 && lex != LEX_TEXT)
-		break;		/* the sequence goes on in the next read */
-	    skipping = 0;
-	    lex = LEX_TEXT;	/* what follows isn't part of it */
-	    continue;
-	}
-
 	has_end = findEnd(buf, rest, &unit, &at, &sent);
 	inside = paste_open;
 	whole = paste_open_whole;
-	lexInput(buf, unit);
 	if (dropping != DROP_NONE) {
 	    drop_last = now;
 	    if (has_end) {

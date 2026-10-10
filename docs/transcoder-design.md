@@ -156,17 +156,18 @@ paste: one typed key by key doesn't count. The end marker is recognized
 split across reads. A read is handled in parts ending at each end marker,
 so input after a paste's end in the same read is converted on its own: a
 character there that can't be encoded is rejected by itself (the
-notification still names the first one). A paste marker whose first bytes
-were dropped isn't passed on as text: its end marker reaches a shell that
-got the paste's start whole, and its start marker isn't counted. When the
-bound ends a drop while input keeps coming (bytes under 50 ms apart), the
-rest of an escape sequence or UTF-8 character it cut is dropped too, but
-only the bytes that continue it, so the next key isn't lost; luit follows
-these over all input, as its own parser doesn't follow CSI sequences. After
-a pause, what comes is input of its own. If the shell got the paste's start
-marker, it still gets the end marker (or the part of it it hasn't got),
-unless the program has turned bracketed paste off since. The paste state is
-reset after `-encode-last-arg` converts a task's command line.
+notification still names the first one). After a drop, what comes goes
+through as it is, as the rest of a paste does after the bound, even if it
+starts with the tail of an escape sequence the drop cut, except for a paste
+marker whose first bytes were dropped: that tail isn't passed on as text,
+the end marker reaches a shell that got the paste's start (whole, or the
+part of it it hasn't got), and a cut start marker isn't counted. Only the
+markers are worth the care: they decide whether the shell is in a paste,
+and an attempt to drop the rest of any cut sequence too had to guess where
+it ended and swallowed the keys after it. If the shell got the paste's
+start marker, it still gets the end marker, unless the program has turned
+bracketed paste off since. The paste state is reset after
+`-encode-last-arg` converts a task's command line.
 
 The bell alone is silent with VS Code's default settings (the terminal bell
 signal only sounds with a screen reader, and the visual bell is off), so a
