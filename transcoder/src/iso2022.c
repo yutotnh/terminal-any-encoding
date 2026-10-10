@@ -434,12 +434,19 @@ fromUtf8(unsigned char *b)
 }
 
 /* PATCH(fork, input rejection): bracketed paste markers (xterm's mode
- * 2004), tracked so a rejected chunk never leaves the shell stuck inside a
- * paste whose start marker was already forwarded. */
+ * 2004). With them, the rest of a paste whose chunk was rejected is
+ * dropped up to the end marker however late it arrives, and a shell whose
+ * paste start was already forwarded still gets the end marker. */
 static const unsigned char PASTE_START[] = "\033[200~";
 static const unsigned char PASTE_END[] = "\033[201~";
 #define PASTE_MARKER_LEN 6
+/* the shell got a paste's start marker but not its end marker yet */
 static int paste_open = 0;
+/* input is being dropped up to the current paste's end marker */
+static int paste_dropping = 0;
+/* the last bytes of the previous chunk, for a marker split across reads */
+static unsigned char paste_carry[PASTE_MARKER_LEN - 1];
+static size_t paste_carry_len = 0;
 
 /* PATCH(fork, input backpressure): converted input waiting for the pty.
  * Writes to it are non-blocking, and upstream ignored a short write, so
@@ -515,28 +522,31 @@ flushInput(int fd, int block)
     return rc;
 }
 
-static const unsigned char *
-findBytes(const unsigned char *hay, size_t n, const unsigned char *needle, size_t m)
+/* Follows the paste markers in a chunk, a marker split across chunks
+ * included: sets *inside after each one, and returns whether there was an
+ * end marker */
+static int
+scanPaste(const unsigned char *buf, size_t n, int *inside)
 {
+    unsigned char window[sizeof(paste_carry) + BUFFER_SIZE];
+    size_t len = paste_carry_len + n;
     size_t k;
-    for (k = 0; k + m <= n; k++) {
-	if (memcmp(hay + k, needle, m) == 0)
-	    return hay + k;
-    }
-    return NULL;
-}
+    int saw_end = 0;
 
-/* Updates paste_open from the markers in a chunk that was forwarded */
-static void
-trackPaste(const unsigned char *buf, size_t n)
-{
-    size_t k;
-    for (k = 0; k + PASTE_MARKER_LEN <= n; k++) {
-	if (memcmp(buf + k, PASTE_START, PASTE_MARKER_LEN) == 0)
-	    paste_open = 1;
-	else if (memcmp(buf + k, PASTE_END, PASTE_MARKER_LEN) == 0)
-	    paste_open = 0;
+    assert(n <= BUFFER_SIZE);
+    memcpy(window, paste_carry, paste_carry_len);
+    memcpy(window + paste_carry_len, buf, n);
+    for (k = 0; k + PASTE_MARKER_LEN <= len; k++) {
+	if (memcmp(window + k, PASTE_START, PASTE_MARKER_LEN) == 0) {
+	    *inside = 1;
+	} else if (memcmp(window + k, PASTE_END, PASTE_MARKER_LEN) == 0) {
+	    *inside = 0;
+	    saw_end = 1;
+	}
     }
+    paste_carry_len = len < sizeof(paste_carry) ? len : sizeof(paste_carry);
+    memcpy(paste_carry, window + len - paste_carry_len, paste_carry_len);
+    return saw_end;
 }
 
 /*
@@ -548,8 +558,10 @@ trackPaste(const unsigned char *buf, size_t n)
  * shell runs (`rm <emoji>*` would become `rm ?*` or `rm *`); the caller
  * rings the bell instead. `discard` drops the chunk without queueing it
  * (the caller uses it for input that follows a rejection, i.e. the rest of
- * a paste). Either way the parser state is still advanced, and an open
- * bracketed paste is closed.
+ * a paste). Inside a bracketed paste, input after a rejection is dropped
+ * up to the paste's end marker whatever `discard` says, and returns 0. In
+ * every case the parser state is still advanced, and a paste the shell
+ * saw start is closed.
  */
 int
 copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
@@ -927,14 +939,18 @@ copyIn(Iso2022Ptr is, unsigned char *buf, int count, int discard)
 #undef EMIT
     }
 
-    if (discard || rejected) {
-	if (paste_open && findBytes(buf, (size_t) count, PASTE_END, PASTE_MARKER_LEN)) {
+    if (discard || rejected || paste_dropping) {
+	int was_dropping = paste_dropping;
+	int inside = paste_open || paste_dropping;
+
+	if (scanPaste(buf, (size_t) count, &inside) && paste_open) {
 	    queueInput(PASTE_END, (size_t) PASTE_MARKER_LEN);
 	    paste_open = 0;
 	}
-	return rejected;
+	paste_dropping = inside;
+	return was_dropping ? 0 : rejected;
     }
-    trackPaste(buf, (size_t) count);
+    (void) scanPaste(buf, (size_t) count, &paste_open);
     if (outlen > 0)
 	queueInput(out, outlen);
     return 0;

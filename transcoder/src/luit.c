@@ -1173,9 +1173,11 @@ notifyRejected(void)
 }
 
 /* PATCH(fork, input rejection): how long input keeps being dropped after a
- * rejection, measured from the last dropped read. Long enough to cover a
- * paste arriving in several reads, short enough not to eat the next
- * keystroke typed by hand. */
+ * rejection, measured from the last dropped read. For a paste without
+ * bracketed paste markers (with them, copyIn() drops up to the end marker
+ * instead), nothing else tells its rest from what's typed next: long
+ * enough to cover a paste arriving in several reads, short enough not to
+ * eat the next keystroke typed by hand. */
 #define REJECT_QUIET_MILLIS 50.0
 
 /* PATCH(fork, title): VS Code re-reads the tab title every 200 ms, output

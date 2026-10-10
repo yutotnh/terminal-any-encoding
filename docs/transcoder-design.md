@@ -128,11 +128,14 @@ character the encoding can't represent is rejected as a whole, and the user
 gets a bell. Substituting `?` or dropping just that character would change the
 command the shell runs (`rm <emoji>*` becomes `rm ?*` / `rm *`). `copyIn()`
 converts each read into a buffer and only writes it if every character
-converted. A paste can arrive in several reads, so input is also dropped until
-it pauses for 50 ms after a rejection (forwarding only the tail of a paste
-could run a different command), and if a bracketed paste (`ESC [200~`) was
-already forwarded, its end marker is still passed through so the shell doesn't
-stay in paste mode. Warning on stderr instead isn't an option either: the
+converted. A paste can arrive in several reads, and forwarding only its tail
+could run a different command, so input after a rejection is dropped too:
+inside a bracketed paste (`ESC [200~` ... `ESC [201~`) up to its end marker,
+however late the rest arrives (over a remote connection it can come well
+apart), and otherwise until input pauses for 50 ms, since nothing else tells
+a paste's rest from what's typed next. Markers split across reads are
+recognized. If the paste's start marker was already forwarded, its end marker
+is still passed through so the shell doesn't stay in paste mode. Warning on stderr instead isn't an option either: the
 messages would be mixed into the terminal output.
 
 The bell alone is silent with VS Code's default settings (the terminal bell

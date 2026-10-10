@@ -91,14 +91,18 @@ FALLBACK_INPUT_CASES = [
     ("GBK", "A☃B", None, "\a", "OTHER charset path (other_ja.c) rejects too"),
 ]
 
-# Input arriving in several reads after a rejection (a paste) is dropped
-# until input pauses, so only the paste's tail can never reach the shell;
-# the next input after the pause goes through. An open bracketed paste is
-# still closed. (encoding, [(delay before write, text)], expected, description)
+# Input arriving in several reads after a rejection (a paste) is dropped,
+# so the paste's tail alone can never reach the shell: up to the end marker
+# of a bracketed paste, however late it comes, or else until input pauses.
+# The next input after that goes through. An open bracketed paste is still
+# closed. (encoding, [(delay before write, text)], expected, description)
 INPUT_REJECTION_SEQUENCE_CASES = [
     ("euc-jp-2007", [(0.0, "rm ☃"), (0.005, "*\n")], "\a", "the rest of a split paste is dropped too"),
     ("euc-jp-2007", [(0.0, "☃"), (0.3, "ok")], "\aok", "input after a pause goes through again"),
     ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃\x1b[201~")], "^[[200~X\a^[[201~", "a rejected chunk still closes an open bracketed paste (the inner tty echoes ESC as ^[)"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " -rf x\x1b[201~"), (0.3, "ok")], "\aok", "the rest of a bracketed paste is dropped up to its end marker, however late"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~rm ☃"), (0.3, " x\x1b[20"), (0.3, "1~"), (0.3, "ok")], "\aok", "an end marker split across reads still ends the paste"),
+    ("euc-jp-2007", [(0.0, "\x1b[200~X"), (0.3, "☃ -rf"), (0.3, " x\x1b[201~")], "^[[200~X\a^[[201~", "an open paste rejected in the middle is dropped and closed at its end marker"),
 ]
 
 # Chinese, Korean, and single-byte encodings
