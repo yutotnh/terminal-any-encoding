@@ -29,6 +29,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   shell that uses bracketed paste, the rest of a paste is now dropped up
   to its end (for 2 seconds at most), the shell gets its paste markers
   whole, and input after the paste's end is sent as usual.
+- Running out of memory while loading a character set's table crashed the
+  terminal, also mid-session when a program switched to a character set
+  not used yet. The character set is now shown as unknown, and luit says
+  which table it couldn't load.
 - The first non-ASCII key typed after the Escape key (with Alt, or any
   time later with nothing in between) was sent as a different character
   (あ as ã), and one the encoding can't represent was sent mangled instead

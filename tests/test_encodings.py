@@ -926,18 +926,27 @@ def run_encode_last_arg_paste_state_case() -> tuple[bool, str]:
     return got == "\aok", f"got {got!r}"
 
 
+def _build_vars() -> tuple[list[str], ...] | str:
+    """The compiler, flags, libraries and objects configure chose for
+    transcoder/src (sanitizers included), or why they couldn't be read"""
+    show = 'print:\n\t@echo "$(CC)|$(CPPFLAGS) $(CFLAGS)|$(LDFLAGS)|$(LIBS)|$(OBJS)"\n'
+    vars_ = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-", "print"], cwd=LUIT.parent,
+                           input=show, capture_output=True, text=True)
+    if vars_.returncode != 0:
+        return f"couldn't read the Makefile: {vars_.stderr.strip()}"
+    return tuple(v.split() for v in vars_.stdout.strip().split("|"))
+
+
 def run_paste_driver() -> tuple[bool, str]:
     """tests/paste_driver.c, built against transcoder/src's objects (with the
     flags configure chose, sanitizers included), feeds copyIn() every way a
     rejected paste, and input with nothing rejected, can be split into
     reads, with the time faked, and checks what the shell gets."""
     src = LUIT.parent
-    show = 'print:\n\t@echo "$(CC)|$(CPPFLAGS) $(CFLAGS)|$(LDFLAGS)|$(LIBS)|$(OBJS)"\n'
-    vars_ = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-", "print"], cwd=src,
-                           input=show, capture_output=True, text=True)
-    if vars_.returncode != 0:
-        return False, f"couldn't read the Makefile: {vars_.stderr.strip()}"
-    cc, cflags, ldflags, libs, objs = (v.split() for v in vars_.stdout.strip().split("|"))
+    vars_ = _build_vars()
+    if isinstance(vars_, str):
+        return False, vars_
+    cc, cflags, ldflags, libs, objs = vars_
     with tempfile.TemporaryDirectory() as tmp:
         luit_lib = os.path.join(tmp, "luit_lib.o")
         driver = os.path.join(tmp, "paste_driver")
@@ -954,6 +963,54 @@ def run_paste_driver() -> tuple[bool, str]:
     lines = ran.stdout.strip().splitlines()
     detail = "\n   ".join(lines[-20:]) if ran.returncode else (lines[-1] if lines else "no output")
     return ran.returncode == 0, detail
+
+
+def run_alloc_fault() -> tuple[bool, str]:
+    """tests/alloc_fault.c fails each allocation in turn while luit loads a
+    built-in charset table, with transcoder/src's sources built again (configure's
+    flags, sanitizers included) with NO_LEAKS and the allocation functions
+    renamed to its counting ones: the load must fail as a whole, leaving
+    nothing behind, and say so on stderr."""
+    src = LUIT.parent
+    vars_ = _build_vars()
+    if isinstance(vars_, str):
+        return False, vars_
+    cc, cflags, ldflags, libs, objs = vars_
+    rename = ["-DNO_LEAKS", "-Dmalloc=test_malloc", "-Dcalloc=test_calloc", "-Drealloc=test_realloc",
+              "-Dstrdup=test_strdup", "-Dfree=test_free"]
+    with tempfile.TemporaryDirectory() as tmp:
+        built_objs = []
+        for o in objs:
+            out = os.path.join(tmp, o)
+            extra = ["-Dmain=luit_main"] if o == "luit.o" else []
+            step = [*cc, *cflags, *rename, *extra, "-c", o[:-2] + ".c", "-o", out]
+            built = subprocess.run(step, cwd=src, capture_output=True, text=True)
+            if built.returncode != 0:
+                return False, f"build of {o} failed: {built.stderr.strip()[-400:]}"
+            built_objs.append(out)
+        driver = os.path.join(tmp, "alloc_fault")
+        step = [*cc, *cflags, "-DNO_LEAKS", "-o", driver, str(REPO_ROOT / "tests" / "alloc_fault.c"), *built_objs,
+                *ldflags, *libs]
+        built = subprocess.run(step, cwd=src, capture_output=True, text=True)
+        if built.returncode != 0:
+            return False, f"build failed: {built.stderr.strip()[-400:]}"
+        ran = subprocess.run([driver], capture_output=True, text=True, errors="replace", timeout=300)
+    lines = ran.stdout.strip().splitlines()
+    if ran.returncode != 0:
+        return False, "\n   ".join(lines[-20:] + ran.stderr.strip().splitlines()[-5:] + [f"exit {ran.returncode}"])
+    said = [line for line in ran.stderr.splitlines() if "couldn't load" in line]
+    if not said:
+        return False, f"no message on stderr ({ran.stderr.strip()[-200:]!r})"
+    return True, "\n   ".join(lines) + f"\n   on stderr, e.g.: {said[0]}"
+
+
+def run_no_prefer_case() -> tuple[bool, str]:
+    """luit loads only built-in tables: upstream's -prefer, which made it
+    load iconv's or fontenc's too, is refused."""
+    ran = subprocess.run([str(LUIT), "-encoding", "euc-jp-2007", "-prefer", "iconv", "--", "true"],
+                         capture_output=True, text=True, errors="replace", timeout=10)
+    ok = ran.returncode != 0 and "Unknown option -prefer" in ran.stderr
+    return ok, f"exit {ran.returncode}, stderr {ran.stderr.strip().splitlines()[:1]}"
 
 
 def run_classic_tree_case() -> tuple[bool, str]:
@@ -1179,6 +1236,19 @@ def main() -> int:
     total += 1
     ok, detail = run_paste_driver()
     print(f"{'OK ' if ok else 'NG '}{detail}")
+    if not ok:
+        failures += 1
+
+    print("\n== a charset table's allocations failing (tests/alloc_fault.c) ==")
+    total += 1
+    ok, detail = run_alloc_fault()
+    print(f"{'OK ' if ok else 'NG '}{detail}")
+    if not ok:
+        failures += 1
+
+    total += 1
+    ok, detail = run_no_prefer_case()
+    print(f"{'OK ' if ok else 'NG '}-prefer, which loaded tables from elsewhere, is refused -> {detail}")
     if not ok:
         failures += 1
 

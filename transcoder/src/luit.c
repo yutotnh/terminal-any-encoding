@@ -100,8 +100,9 @@ int fill_fontenc = 0;
  * their data instead of ours, and musl's iconv, which the distributed
  * binaries have, knows none of CP1253/1254/1256/1257/1258/874. Every
  * charset the supported encodings use has a built-in table (builtin.c or
- * the fork's builtin_fork.c), so only those are used (-prefer can name one
- * other source to use instead). */
+ * the fork's builtin_fork.c), so only those are used, and -prefer, which
+ * named others to use, is gone: the others' loading isn't checked for
+ * running out of memory, as the built-in tables' is (luitconv.c). */
 UM_MODE lookup_order[] =
 {
     umBUILTIN, umNONE
@@ -192,7 +193,6 @@ help(const char *program, int fatal)
 	DATA("oss", +, "disable single-shifts in output"),
 	DATA("ot", +, "disable interpretation of all sequences in output"),
 	DATA("p", -, "do parent/child handshake"),
-	DATA("prefer list", -, "override preference between fontenc/iconv lookups"),
 	DATA("show-builtin enc", -, "show details of a given built-in encoding"),
 	DATA("show-fontenc enc", -, "show details of an \".enc\" encoding file"),
 	DATA("show-iconv enc", -, "show iconv encoding in \".enc\" format"),
@@ -247,87 +247,9 @@ help(const char *program, int fatal)
 	ExitFailure();
 }
 
-#ifdef USE_ICONV
-static void
-setLookupOrder(const char *name)
-{
-    /* *INDENT-OFF* */
-    static const struct {
-	UM_MODE order;
-	const char *name;
-    } table[] = {
-	{ umBUILTIN,  "builtin" },
-	{ umFONTENC,  "fontenc" },
-	{ umICONV,    "iconv" },
-	{ umPOSIX,    "posix" },
-    };
-    /* *INDENT-ON* */
-
-    size_t j, k;
-    char *toparse = strmalloc(name);
-    char *tomatch = toparse;
-    char *token;
-    UM_MODE new_list[SizeOf(lookup_order)];
-    size_t limit = SizeOf(lookup_order) - 1;
-    size_t used = 0;
-
-    TRACE(("setLookupOrder(%s)\n", NonNull(name)));
-    while ((token = strtok(tomatch, ",")) != NULL) {
-	UM_MODE order = umNONE;
-	size_t length = strlen(token);
-
-	tomatch = NULL;
-	for (j = 0; j < SizeOf(table); ++j) {
-	    if (length <= strlen(table[j].name)
-		&& !strncmp(token, table[j].name, length)) {
-		order = table[j].order;
-		break;
-	    }
-	}
-	if (order == umNONE) {
-	    FatalError("invalid item in -prefer option: %s\n", token);
-	}
-	if (used >= limit) {
-	    FatalError("too many items in -prefer option: %s\n", name);
-	}
-	new_list[used++] = order;
-    }
-
-    while (used < limit) {
-	for (j = 0; j < limit; ++j) {
-	    int found = 0;
-	    for (k = 0; k < used; ++k) {
-		if (lookup_order[j] == new_list[k]) {
-		    ++found;
-		}
-	    }
-	    if (!found) {
-		new_list[used++] = lookup_order[j];
-	    } else if (found > 1) {
-		FatalError("repeated keyword in -prefer option: %s\n", name);
-	    }
-	}
-    }
-
-    VERBOSE(1, ("Lookup order: "));
-    for (j = 0; j < limit; ++j) {
-	lookup_order[j] = new_list[j];
-	if (verbose) {
-	    for (k = 0; k < SizeOf(table); ++k) {
-		if (table[k].order == lookup_order[j]) {
-		    if (j)
-			VERBOSE(1, (","));
-		    VERBOSE(1, ("%s", table[k].name));
-		    break;
-		}
-	    }
-	}
-    }
-    VERBOSE(1, ("\n"));
-
-    free(toparse);
-}
-#else
+/* PATCH(fork, built-in tables only): no -prefer, which made luit load
+ * tables from fontenc, iconv or posix too (see lookup_order) */
+#ifndef USE_ICONV
 static int
 needIconvCfg(void)
 {
@@ -337,7 +259,6 @@ needIconvCfg(void)
 
 #define reportBuiltinCharsets()  needIconvCfg()
 #define reportIconvCharsets()    needIconvCfg()
-#define setLookupOrder(name)     needIconvCfg()
 #define showBuiltinCharset(name) needIconvCfg()
 #define showIconvCharset(name)   needIconvCfg()
 #endif
@@ -376,9 +297,6 @@ parseOptions(int argc, char **argv)
 	} else if (!strcmp(argv[i], "-fill-fontenc")) {
 	    fill_fontenc = 1;
 	    i++;
-	} else if (!strcmp(argv[i], "-prefer")) {
-	    setLookupOrder(getParam(i));
-	    i += 2;
 	} else if (!strcmp(argv[i], "-show-builtin")) {
 	    ExitProgram(showBuiltinCharset(getParam(i)));
 	} else if (!strcmp(argv[i], "-show-fontenc")) {
