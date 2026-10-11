@@ -178,41 +178,51 @@ failEachAllocation(const Table *t)
 }
 
 /*
- * In the charset layer: the table of JIS X 0208 fails to load (its first
- * allocation, after the charset record's), so the charset falls back to
- * the unknown one, and keeps doing so when asked for again.
+ * In the charset layer: JIS X 0212 has two entries in charset.c's table (a
+ * 94x94 and a 96x96 charset), each tried once. Its table fails to load
+ * (the first allocation after the charset record's) for each, so the
+ * charset falls back to the unknown one, and isn't loaded again with
+ * allocations succeeding. Run in a process of its own ("charset"), whose
+ * stderr tests/test_encodings.py checks for that table's message.
  */
 static void
 charsetFallsBack(void)
 {
     const CharsetRec *c;
+    int k;
 
-    calls = 0;
-    fail_at = 2;
-    c = getCharsetByName("JIS X 0208");
-    fail_at = 0;
-    if (c == NULL || !strcmp(c->name, "JIS X 0208")) {
+    for (k = 0; k < 2; k++) {
+	calls = 0;
+	fail_at = 2;
+	c = getCharsetByName("JIS X 0212");
+	fail_at = 0;
+	if (c == NULL || !strcmp(c->name, "JIS X 0212")) {
+	    failures++;
+	    printf("NG a charset whose table failed doesn't fall back to the unknown one\n");
+	    return;
+	}
+    }
+    if ((c = getCharsetByName("JIS X 0212")) == NULL || !strcmp(c->name, "JIS X 0212")) {
 	failures++;
-	printf("NG a charset whose table failed doesn't fall back to the unknown one\n");
-    } else if ((c = getCharsetByName("JIS X 0208")) == NULL
-	       || !strcmp(c->name, "JIS X 0208")) {
-	failures++;
-	printf("NG a charset whose table failed is tried again\n");
+	printf("NG a charset entry whose table failed is tried again\n");
     } else {
-	printf("JIS X 0208: falls back to %s after its table failed\n", c->name);
+	printf("JIS X 0212: falls back to %s after its table failed\n", c->name);
     }
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
     size_t k;
 
     setvbuf(stdout, NULL, _IONBF, 0);	/* all of it, should a check crash */
     ignore_locale = 1;
-    for (k = 0; k < sizeof(tables) / sizeof(tables[0]); k++)
-	failEachAllocation(&tables[k]);
-    charsetFallsBack();
+    if (argc > 1 && !strcmp(argv[1], "charset")) {
+	charsetFallsBack();
+    } else {
+	for (k = 0; k < sizeof(tables) / sizeof(tables[0]); k++)
+	    failEachAllocation(&tables[k]);
+    }
     printf("%s\n", failures ? "allocation failures not handled" : "every allocation failure handled");
     return failures ? 1 : 0;
 }

@@ -995,13 +995,16 @@ def run_alloc_fault() -> tuple[bool, str]:
         if built.returncode != 0:
             return False, f"build failed: {built.stderr.strip()[-400:]}"
         ran = subprocess.run([driver], capture_output=True, text=True, errors="replace", timeout=300)
-    lines = ran.stdout.strip().splitlines()
-    if ran.returncode != 0:
-        return False, "\n   ".join(lines[-20:] + ran.stderr.strip().splitlines()[-5:] + [f"exit {ran.returncode}"])
-    said = [line for line in ran.stderr.splitlines() if "couldn't load" in line]
+        charset = subprocess.run([driver, "charset"], capture_output=True, text=True, errors="replace", timeout=60)
+    lines = ran.stdout.strip().splitlines() + charset.stdout.strip().splitlines()
+    if ran.returncode != 0 or charset.returncode != 0:
+        return False, "\n   ".join(lines[-20:] + (ran.stderr + charset.stderr).strip().splitlines()[-5:]
+                                   + [f"exit {ran.returncode}, {charset.returncode}"])
+    # the charset layer's case failed JIS X 0212's table, not something else
+    said = [line for line in charset.stderr.splitlines() if "couldn't load the jisx0212.1990-0 table" in line]
     if not said:
-        return False, f"no message on stderr ({ran.stderr.strip()[-200:]!r})"
-    return True, "\n   ".join(lines) + f"\n   on stderr, e.g.: {said[0]}"
+        return False, f"no message for JIS X 0212's table on stderr ({charset.stderr.strip()[-200:]!r})"
+    return True, "\n   ".join(lines) + f"\n   on stderr: {said[0]}"
 
 
 def run_no_prefer_case() -> tuple[bool, str]:
