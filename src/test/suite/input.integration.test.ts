@@ -36,10 +36,13 @@ suite(
       dir = fs.mkdtempSync(path.join(os.tmpdir(), "tae-input-"));
       recorded = path.join(dir, "recorded");
       const script = path.join(dir, "record");
-      fs.writeFileSync(
-        script,
-        `#!/bin/sh\nprintf '\\033[?2004h'\nstty raw -echo\nexec cat > '${recorded}'\n`,
-      );
+      const lines = [
+        "#!/bin/sh",
+        "printf '\\033[?2004h'",
+        "stty raw -echo",
+        `exec cat > '${recorded}'`,
+      ];
+      fs.writeFileSync(script, lines.join("\n") + "\n");
       fs.chmodSync(script, 0o755);
       restoreShell = await useTestShell(script);
     });
