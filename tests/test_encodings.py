@@ -1009,10 +1009,27 @@ def run_alloc_fault() -> tuple[bool, str]:
 
 def run_no_prefer_case() -> tuple[bool, str]:
     """luit loads only built-in tables: upstream's -prefer, which made it
-    load iconv's or fontenc's too, is refused."""
-    ran = subprocess.run([str(LUIT), "-encoding", "euc-jp-2007", "-prefer", "iconv", "--", "true"],
-                         capture_output=True, text=True, errors="replace", timeout=10)
-    ok = ran.returncode != 0 and "Unknown option -prefer" in ran.stderr
+    load iconv's or fontenc's too, and -show-iconv, which can't load
+    iconv's tables to show, are refused."""
+    details = []
+    for option, args in (("-prefer", ["-encoding", "euc-jp-2007", "-prefer", "iconv", "--", "true"]),
+                         ("-show-iconv", ["-show-iconv", "ISO-8859-2"])):
+        ran = subprocess.run([str(LUIT), *args], capture_output=True, text=True, errors="replace", timeout=10)
+        said = ran.stderr.strip().splitlines()[:1]
+        if ran.returncode == 0 or f"Unknown option {option}" not in ran.stderr:
+            return False, f"{option}: exit {ran.returncode}, stderr {said}"
+        details.append(said[0])
+    return True, ", ".join(details)
+
+
+def run_no_enc_files_case() -> tuple[bool, str]:
+    """A charset name missing from luit's tables isn't looked up in the
+    system's ".enc" files: with FONT_ENCODINGS_DIRECTORY naming a file that
+    doesn't exist, upstream stopped with "cannot open"."""
+    env = dict(os.environ, FONT_ENCODINGS_DIRECTORY="/nonexistent/encodings.dir")
+    ran = subprocess.run([str(LUIT), "-t", "-encoding", "eucKR", "-g0", "No Such Charset", "--", "true"],
+                         capture_output=True, text=True, errors="replace", timeout=10, env=env)
+    ok = ran.returncode == 0 and "encodings.dir" not in ran.stderr
     return ok, f"exit {ran.returncode}, stderr {ran.stderr.strip().splitlines()[:1]}"
 
 
@@ -1251,7 +1268,12 @@ def main() -> int:
 
     total += 1
     ok, detail = run_no_prefer_case()
-    print(f"{'OK ' if ok else 'NG '}-prefer, which loaded tables from elsewhere, is refused -> {detail}")
+    print(f"{'OK ' if ok else 'NG '}-prefer and -show-iconv, which wanted tables from elsewhere, are refused -> {detail}")
+    if not ok:
+        failures += 1
+    total += 1
+    ok, detail = run_no_enc_files_case()
+    print(f"{'OK ' if ok else 'NG '}a charset missing from the tables isn't looked up in .enc files -> {detail}")
     if not ok:
         failures += 1
 

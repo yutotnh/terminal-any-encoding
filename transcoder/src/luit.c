@@ -195,7 +195,6 @@ help(const char *program, int fatal)
 	DATA("p", -, "do parent/child handshake"),
 	DATA("show-builtin enc", -, "show details of a given built-in encoding"),
 	DATA("show-fontenc enc", -, "show details of an \".enc\" encoding file"),
-	DATA("show-iconv enc", -, "show iconv encoding in \".enc\" format"),
 	DATA("t", -, "testing (initialize locale but no terminal)"),
 	DATA("v", -, "verbose (repeat to increase level)"),
 	DATA("x", -, "exit as soon as child dies"),
@@ -248,7 +247,8 @@ help(const char *program, int fatal)
 }
 
 /* PATCH(fork, built-in tables only): no -prefer, which made luit load
- * tables from fontenc, iconv or posix too (see lookup_order) */
+ * tables from fontenc, iconv or posix too, and no -show-iconv, which can't
+ * load iconv's tables to show (see lookup_order) */
 #ifndef USE_ICONV
 static int
 needIconvCfg(void)
@@ -260,7 +260,6 @@ needIconvCfg(void)
 #define reportBuiltinCharsets()  needIconvCfg()
 #define reportIconvCharsets()    needIconvCfg()
 #define showBuiltinCharset(name) needIconvCfg()
-#define showIconvCharset(name)   needIconvCfg()
 #endif
 
 static char *
@@ -301,8 +300,6 @@ parseOptions(int argc, char **argv)
 	    ExitProgram(showBuiltinCharset(getParam(i)));
 	} else if (!strcmp(argv[i], "-show-fontenc")) {
 	    ExitProgram(showFontencCharset(getParam(i)));
-	} else if (!strcmp(argv[i], "-show-iconv")) {
-	    ExitProgram(showIconvCharset(getParam(i)));
 	} else if (!strcmp(argv[i], "-list-builtin")) {
 	    ExitProgram(reportBuiltinCharsets());
 	} else if (!strcmp(argv[i], "-list-fontenc")) {
