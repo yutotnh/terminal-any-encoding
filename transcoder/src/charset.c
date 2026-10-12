@@ -399,39 +399,6 @@ cpSize(FontencCharsetPtr fc)
 }
 #endif
 
-static int
-addFontencCharset(const char *name, FontEncPtr f)
-{
-    FontencCharsetPtr fc = fontencCharsets;
-    FontencCharsetPtr limit = fc + SizeOf(fontencCharsets);
-    int result = 0;
-    int c_size = typeOfFontenc(f);
-    int c_type;
-
-    if (c_size <= 94) {
-	c_type = T_94;
-    } else if (c_size <= 96) {
-	c_type = T_96;
-    } else if (c_size <= 128) {
-	c_type = T_128;
-    } else {
-	VERBOSE(1, ("unexpected character-set size: %d\n", c_size));
-	return 0;
-    }
-
-    while (fc->name) {
-	fc++;
-    }
-    if (fc < (limit - 1)) {
-	result = 1;
-	fc->name = strdup(name);
-	fc->xlfd = strdup(name);
-	fc->type = c_type;
-	fc->shift = shiftOfFontenc(f);
-    }
-    return result;
-}
-
 static CharsetPtr
 getFontencCharset(unsigned final, int type, const char *name)
 {
@@ -603,7 +570,6 @@ const CharsetRec *
 getCharsetByName(const char *name)
 {
     const CharsetRec *c;
-    FontEncPtr f;
     int type = T_94;
 
     VERBOSE(2, ("getCharsetByName(%s)\n", NonNull(name)));
@@ -624,16 +590,11 @@ getCharsetByName(const char *name)
     if (c)
 	return c;
 
-    /*
-     * If we did not find the name in a table, look for a ".enc" * file.
-     */
-    if ((f = lookupOneFontenc(name)) != NULL) {
-	if (addFontencCharset(name, f)) {
-	    c = getFontencCharset(0, 0, name);
-	    if (c)
-		return c;
-	}
-    }
+    /* PATCH(fork, built-in tables only): upstream looked a name missing
+     * from the tables up in the system's ".enc" files here (fontenc.c).
+     * Only built-in tables are used (lookup_order in luit.c), and what
+     * those files say depends on the machine (FONT_ENCODINGS_DIRECTORY,
+     * or encodings.dir where luit was built). */
     return getUnknownCharset(type);
 }
 /* *INDENT-OFF* */
