@@ -374,11 +374,32 @@ CI builds luit in two ways that aren't distributed (`scripts/build.sh`):
 
 ## Known upstream bugs and fixes
 
-- Not fixed yet: loading a table in `luitconv.c` doesn't check its
-  allocations (`newLuitConv()`'s arrays, the encoding name, each row's
-  text), so running out of memory then crashes luit, also mid-session when
-  a program designates a charset not loaded yet. A fix has to cover all of
-  them at once and leave no half-made table behind.
+- Loading a built-in table in `luitconv.c` didn't check its allocations,
+  so running out of memory crashed luit, also mid-session when a program
+  designated a charset not loaded yet. Every allocation of that load is
+  checked now: `newLuitConv()`'s record and arrays, the table's name, and
+  each row's text in `initializeBuiltInTable()`. A table is loaded whole
+  or not at all (one missing a row would make its character vanish): what
+  was made is freed by `freeLuitConv()`, which `luitDestroyReverse()` also
+  uses, before it's linked, and luit says on stderr which table it
+  couldn't load. The charset then falls back to the unknown one, and the
+  entry of `charset.c`'s table it came from (JIS X 0212 has a 94×94 and a
+  96×96 one) stays failed (`T_FAILED`) for the session, as when its table
+  can't be found: trying again at each designation would allocate a whole
+  table and print the message each time.
+  `tests/alloc_fault.c` fails each allocation of a load in turn (every one
+  of an 8-bit table, the first, middle and last 200 of a 16-bit one) and
+  checks the load fails whole, leaving nothing allocated. Tables are only
+  made from built-in data: upstream's `-prefer`, which made luit make them
+  from iconv, fontenc's `.enc` files or posix too, is gone (see
+  `lookup_order` in `luit.c`), so those makers' unchecked allocations
+  (`initialize8bitTable()`, `initialize16bitTable()`,
+  `loadCompositeCharset()`, `convertFontEnc()`) are never reached. Not
+  covered: `getCharsetByName()` still looks a charset that isn't in its
+  tables up in the system's `.enc` files and reads them (`fontenc.c`),
+  which happens for a name luit has no table for, and for an OTHER charset
+  (SJIS, GBK...) whose table failed to load, as those aren't marked
+  failed; and the `-show-*` and `-list-*` options, which print and exit.
 - `allocatePty()` in `sys.c`, `openpty()` path: `openpty()` also opens the
   slave side, and only the child closed it (in `openTty()`). The parent
   kept it open, so the master never saw EOF/EIO when the shell exited and

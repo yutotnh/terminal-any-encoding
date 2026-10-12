@@ -199,15 +199,51 @@ ConvToUTF8(UCHAR * target, UINT source, size_t limit)
 
 /******************************************************************************/
 
+/* PATCH(fork, table allocation): frees a table and all it holds, linked
+ * into all_conversions or not (see luitDestroyReverse()). An iconv
+ * descriptor in it is closed: one its creator closes itself is set to
+ * NO_ICONV first. */
+static void
+freeLuitConv(LuitConv * p)
+{
+    size_t n;
+
+    free(p->encoding_name);
+    if (p->iconv_desc != NO_ICONV)
+	iconv_close(p->iconv_desc);
+    if (p->table_utf8 != NULL) {
+	for (n = 0; n < p->table_size; ++n)
+	    free(p->table_utf8[n].text);
+    }
+    free(p->table_utf8);
+    free(p->rev_index);
+    free(p);
+}
+
+/* PATCH(fork, table allocation): luit loads a table whole or not at all,
+ * as a table missing a row would make its character vanish (see
+ * docs/transcoder-design.md): says so when an allocation fails */
+static void
+noMemoryFor(const char *table)
+{
+    Message("luit: couldn't load the %s table: out of memory\n", NonNull(table));
+}
+
 static LuitConv *
 newLuitConv(size_t elts)
 {
     LuitConv *result = TypeCalloc(LuitConv);
     if (result != NULL) {
 	TRACE(("newLuitConv(%u)\n", (unsigned) elts));
+	result->iconv_desc = NO_ICONV;	/* PATCH(fork, table allocation) */
 	result->table_size = elts;
 	result->table_utf8 = TypeCallocN(MappingData, elts);
 	result->rev_index = TypeCallocN(ReverseData, elts);
+	/* PATCH(fork, table allocation) */
+	if (elts != 0 && (result->table_utf8 == NULL || result->rev_index == NULL)) {
+	    freeLuitConv(result);
+	    result = NULL;
+	}
     }
     return result;
 }
@@ -752,7 +788,7 @@ findEncodingAlias(const char *encoding_name)
     return result;
 }
 
-static void
+static int
 initializeBuiltInTable(LuitConv * data,
 		       const BuiltInCharsetRec * builtIn,
 		       int enc_file)
@@ -796,6 +832,8 @@ initializeBuiltInTable(LuitConv * data,
 		 * keeps the text */
 		free(data->table_utf8[j].text);
 		data->table_utf8[j].text = malloc(need + 1);
+		if (data->table_utf8[j].text == NULL)	/* PATCH(fork, table allocation) */
+		    return 0;
 		data->table_utf8[j].size = need;
 		memcpy(data->table_utf8[j].text, buffer, need);
 	    }
@@ -809,6 +847,7 @@ initializeBuiltInTable(LuitConv * data,
 	    }
 	}
     }
+    return 1;
 }
 
 /* PATCH(fork, builtin tables): builtin_encodings_fork (luitconv.h) is an
@@ -995,15 +1034,33 @@ initLuitConv(const char *encoding_name,
     }
 
     TRACE(("initLuitConv(%s) %u\n", NonNull(encoding_name), (unsigned) length));
-    if ((latest = newLuitConv(length)) != NULL) {
+    if ((latest = newLuitConv(length)) == NULL) {
+	noMemoryFor(encoding_name);	/* PATCH(fork, table allocation) */
+    } else {
+	int loaded;
+
 	latest->encoding_name = strmalloc(encoding_name);
 	latest->iconv_desc = my_desc;
-	if (builtIn != NULL) {
-	    initializeBuiltInTable(latest, builtIn, enc_file);
+	/* PATCH(fork, table allocation): what failed to load is freed, not
+	 * linked */
+	if (latest->encoding_name == NULL) {
+	    loaded = 0;
+	} else if (builtIn != NULL) {
+	    loaded = initializeBuiltInTable(latest, builtIn, enc_file);
 	} else if (length == MAX16) {
+	    /* iconv's, which luit doesn't load in a session (see
+	     * lookup_order in luit.c): not checked */
 	    initialize16bitTable(latest->encoding_name, &latest, 1);
+	    loaded = 1;
 	} else {
 	    initialize8bitTable(latest);
+	    loaded = 1;
+	}
+	if (!loaded) {
+	    latest->iconv_desc = NO_ICONV;	/* the caller's to close */
+	    freeLuitConv(latest);
+	    noMemoryFor(encoding_name);
+	    return NULL;
 	}
 	finishIconvTable(latest);
 	result = &(latest->mapping);
@@ -1602,21 +1659,9 @@ void
 luitDestroyReverse(FontMapReversePtr reverse)
 {
     LuitConv *p, *q;
-    size_t n;
 
     for (p = all_conversions, q = NULL; p != NULL; q = p, p = p->next) {
 	if (&(p->reverse) == reverse) {
-
-	    free(p->encoding_name);
-	    if (p->iconv_desc != NO_ICONV)
-		iconv_close(p->iconv_desc);
-
-	    for (n = 0; n < p->table_size; ++n) {
-		if (p->table_utf8[n].text) {
-		    free(p->table_utf8[n].text);
-		}
-	    }
-
 	    if (last_found == p)	/* PATCH(fork, fallback) */
 		last_found = NULL;
 
@@ -1625,9 +1670,7 @@ luitDestroyReverse(FontMapReversePtr reverse)
 		q->next = p->next;
 	    else
 		all_conversions = p->next;
-	    free(p->table_utf8);
-	    free(p->rev_index);
-	    free(p);
+	    freeLuitConv(p);	/* PATCH(fork, table allocation) */
 	    break;
 	}
     }
