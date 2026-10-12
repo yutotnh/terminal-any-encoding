@@ -83,7 +83,8 @@
     "nologo",
     "noexit",
     "unencodable",
-    "vscodeignore"
+    "vscodeignore",
+    "stty"
   ],
   "ignorePaths": [
     "node_modules/**",
