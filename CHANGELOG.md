@@ -7,36 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- Output in single-byte encodings (Windows code pages, ISO 8859, KOI8, DOS
-  code pages and so on) is converted two to four times as fast, depending
-  on the text.
-- A pasted text that is rejected now reaches a shell that uses bracketed
-  paste as an empty paste, and the Escape key pressed alone is sent up to
-  10 ms later.
+## [0.1.1] - 2026-10-12
 
 ### Fixed
 
-- macOS: the output of a command that printed and exited at once (a task,
-  for example) could be lost when VS Code read it late.
-- Opening a second terminal of the same encoding from the dropdown while
-  the first was still starting could leave the second one inactive.
-- When a paste was rejected for a character the encoding can't represent,
-  the rest of it could still reach the shell if it arrived more than
-  50 ms later, as it can over a remote connection, and a paste's end
-  marker split across reads could leave the shell in paste mode. With a
-  shell that uses bracketed paste, the rest of a paste is now dropped up
-  to its end (for 2 seconds at most), the shell gets its paste markers
-  whole, and input after the paste's end is sent as usual.
-- Running out of memory while loading a character set's table crashed the
-  terminal, also mid-session when a program switched to a character set
-  not used yet. The character set is now shown as unknown, and luit says
-  which table it couldn't load.
-- The first non-ASCII key typed after the Escape key (with Alt, or any
-  time later with nothing in between) was sent as a different character
-  (あ as ã), and one the encoding can't represent was sent mangled instead
-  of being rejected.
+- Pasted or typed non-ASCII text could reach the shell as something else:
+  - Part of a paste with a character the encoding can't represent could
+    still get through, over a remote connection for example, and leave
+    the shell taking what you typed next as pasted. In a shell that uses
+    bracketed paste, such a paste is now dropped from that character on
+    (a local paste is dropped whole, as VS Code sends it at once). To
+    recognize where a paste starts, the Escape key pressed alone now
+    reaches the program up to 10 ms later.
+  - A character typed with Alt, or as the next key after the Escape key,
+    was sent as a different character (あ as ã), or garbled instead of
+    rejected when the encoding can't represent it.
+- macOS: the output of a command that prints and exits at once, such as a
+  task, could be lost.
+- Output in single-byte encodings (Windows code pages, ISO 8859, KOI8, DOS
+  code pages and so on) was slow to show: it's now two to four times as
+  fast.
+- Opening two terminals of the same encoding from the dropdown in quick
+  succession could bring the first one to the front instead of the second.
 
 ## [0.1.0] - 2026-10-08
 

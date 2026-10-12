@@ -2,7 +2,7 @@
   "name": "terminal-any-encoding",
   "displayName": "Terminal Any Encoding",
   "description": "%extension.description%",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "yutotnh",
   "icon": "images/icon.png",
   "license": "MIT",
