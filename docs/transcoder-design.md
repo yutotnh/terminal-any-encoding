@@ -102,11 +102,12 @@ Nor does luit read those files otherwise: upstream's `getCharsetByName()`
 looked a charset name missing from its tables up in the `.enc` files (and a
 missing `encodings.dir` stopped luit), and `-prefer` and `-show-iconv`
 asked for the other sources; the fork drops all three. Traced on the musl
-binary (`strace -e trace=openat`) for every supported encoding, with a
-program designating every charset final as G0-G3 (94, 96, 94×94 and 96×96
-sets), luit opened no file, with `FONT_ENCODINGS_DIRECTORY` set or not. The
-`-show-fontenc` and `-list-fontenc` options still read them, to print and
-exit.
+binary (`strace -f -e trace=open,openat`) for every supported encoding,
+started with its `-encoding` and a program designating every charset final
+as G0-G3 (94, 96, 94×94 and 96×96 sets), luit opened nothing but `/dev` and
+`/proc` (no charset data, no configuration file), with
+`FONT_ENCODINGS_DIRECTORY` set or not. The `-show-fontenc` and
+`-list-fontenc` options still read them, to print and exit.
 
 GB18030's supplementary planes (U+10000 and above) are a single formula
 (`linear = cp - 0x10000 + 189000`), and the BMP's 4-byte sequences a table
