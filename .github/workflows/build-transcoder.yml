@@ -65,7 +65,7 @@ jobs:
               python3 tests/test_encodings.py
               python3 tests/test_editor_parity.py
             '
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: transcoder-linux-${{ matrix.arch }}
           path: transcoder/src/luit
@@ -88,7 +88,7 @@ jobs:
       - name: Dependencies (Homebrew)
         run: brew install autoconf automake
       # The editor-parity test compares with iconv-lite.
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: ./.nvmrc
       - run: npm ci --ignore-scripts
@@ -101,7 +101,7 @@ jobs:
         run: |
           python3 tests/test_encodings.py
           python3 tests/test_editor_parity.py
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: transcoder-darwin-${{ matrix.arch }}
           path: transcoder/src/luit
