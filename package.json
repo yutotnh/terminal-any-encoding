@@ -419,7 +419,7 @@
     "@vscode/iconv-lite-umd": "0.7.1",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
-    "eslint": "^10.12.0",
+    "eslint": "^10.13.0",
     "eslint-plugin-n": "^18.4.1",
     "glob": "^13.0.6",
     "globals": "^17.13.0",
